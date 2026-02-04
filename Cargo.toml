@@ -1,0 +1,13 @@
+[package]
+name = "gaze"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+anyhow = "1.0"
+thiserror = "2.0"
+toml = "0.8"
+directories = "6.0"
+glob = "0.3"
