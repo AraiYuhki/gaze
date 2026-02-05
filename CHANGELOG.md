@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-02-05
+
+### Fixed
+
+- コミット実行キーを `Ctrl+D` に変更（`Ctrl+Enter` はターミナルによって認識されないため）
+- IME のプリエディット（変換中文字列）がコミットメッセージ入力位置に表示されるよう修正
+- discard がステージ済みの変更にも対応するよう修正
+- Windows でのページャ起動に対応（`cmd /c` を使用）
+
+### Added
+
+- シェルスクリプトインストーラー（macOS/Linux）
+- Scoop マニフェスト（Windows）
+
 ## [0.2.0] - 2026-02-05
 
 ### Added
