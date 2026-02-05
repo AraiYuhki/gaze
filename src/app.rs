@@ -345,10 +345,20 @@ impl AppState {
     /// - Git コマンドの実行に失敗した場合
     pub fn discard_changes(&mut self) -> Result<()> {
         if let ConfirmDialog::DiscardChanges { file_index } = self.confirm_dialog {
-            if let Some(file) = self.status_cache.get(file_index) {
+            if let Some(file) = self.status_cache.get(file_index).cloned() {
                 let path_str = file.path.to_string_lossy();
-                // git restore <file> で変更を破棄
-                self.git.execute(&["restore", path_str.as_ref()])?;
+
+                // ステージ済みの変更を破棄
+                if file.index != StatusKind::Unmodified && file.index != StatusKind::Untracked {
+                    self.git
+                        .execute(&["restore", "--staged", path_str.as_ref()])?;
+                }
+
+                // ワークツリーの変更を破棄
+                if file.worktree != StatusKind::Unmodified {
+                    self.git.execute(&["restore", path_str.as_ref()])?;
+                }
+
                 self.confirm_dialog = ConfirmDialog::None;
                 // 操作完了後に1回だけ status を再取得
                 self.refresh_status()?;
