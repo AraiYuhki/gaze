@@ -19,7 +19,7 @@ mod pager;
 mod ui;
 mod update;
 
-use app::{AppState, CommitMode, ConfirmDialog, View};
+use app::{AppState, CommitMode, ConfirmDialog, StashInputMode, View};
 use config::Settings;
 use pager::Pager;
 
@@ -109,6 +109,7 @@ fn run_app(
                     View::Status => ui::status_view::render(f, state),
                     View::Tree => ui::tree_view::render(f, state),
                     View::Log => ui::log_view::render(f, state),
+                    View::Stash => ui::stash_view::render(f, state),
                 }
             }
             // ヘルプ画面をオーバーレイ表示
@@ -180,7 +181,27 @@ fn run_app(
                     }
                     continue;
                 }
+                ConfirmDialog::DropStash { .. } => {
+                    match key.code {
+                        KeyCode::Char('y') | KeyCode::Char('Y') => {
+                            if let Err(e) = state.stash_drop() {
+                                state.set_status_message(&format!("Error: {}", e));
+                            }
+                        }
+                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                            state.cancel_confirm();
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
                 ConfirmDialog::None => {}
+            }
+
+            // Stash 入力モード中のキー処理
+            if state.stash_input_mode != StashInputMode::None {
+                handle_stash_input_keys(state, &key)?;
+                continue;
             }
 
             // コミットモード中のキー処理
@@ -203,12 +224,17 @@ fn run_app(
                     state.switch_view(View::Log);
                     continue;
                 }
+                KeyCode::Char('4') => {
+                    state.switch_view(View::Stash);
+                    continue;
+                }
                 KeyCode::Tab => {
-                    // Tab で順次切り替え: Status -> Tree -> Log -> Status
+                    // Tab で順次切り替え: Status -> Tree -> Log -> Stash -> Status
                     let next_view = match state.current_view {
                         View::Status => View::Tree,
                         View::Tree => View::Log,
-                        View::Log => View::Status,
+                        View::Log => View::Stash,
+                        View::Stash => View::Status,
                     };
                     state.switch_view(next_view);
                     continue;
@@ -233,6 +259,7 @@ fn run_app(
                 View::Status => handle_status_view_keys(terminal, state, key.code, &pager)?,
                 View::Tree => handle_tree_view_keys(state, key.code),
                 View::Log => handle_log_view_keys(terminal, state, key.code, &pager)?,
+                View::Stash => handle_stash_view_keys(terminal, state, key.code, &pager)?,
             }
         }
     }
@@ -599,6 +626,113 @@ fn handle_commit_mode_keys(
         }
     }
 
+    Ok(())
+}
+
+/// Stash View のキー処理
+fn handle_stash_view_keys(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    state: &mut AppState,
+    code: KeyCode,
+    pager: &Pager,
+) -> Result<()> {
+    match code {
+        // ナビゲーション
+        KeyCode::Char('j') | KeyCode::Down => {
+            state.select_next();
+            state.clear_status_message();
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            state.select_previous();
+            state.clear_status_message();
+        }
+        KeyCode::Char('g') => {
+            state.select_first();
+            state.clear_status_message();
+        }
+        KeyCode::Char('G') => {
+            state.select_last();
+            state.clear_status_message();
+        }
+        // Stash push（メッセージ入力ダイアログを表示）
+        KeyCode::Char('s') => {
+            state.start_stash_push();
+        }
+        // Stash pop
+        KeyCode::Char('p') => {
+            if let Err(e) = state.stash_pop() {
+                state.set_status_message(&format!("Error: {}", e));
+            }
+        }
+        // Stash apply
+        KeyCode::Char('a') => {
+            if let Err(e) = state.stash_apply() {
+                state.set_status_message(&format!("Error: {}", e));
+            }
+        }
+        // Stash drop（確認ダイアログを表示）
+        KeyCode::Char('d') => {
+            state.show_stash_drop_confirm();
+        }
+        // Stash show（内容表示）
+        KeyCode::Enter => {
+            match state.get_stash_show() {
+                Ok(content) => {
+                    if content.is_empty() {
+                        state.set_status_message("No stash selected");
+                    } else {
+                        disable_raw_mode()?;
+                        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+
+                        if let Err(e) = pager.display(&content) {
+                            enable_raw_mode()?;
+                            execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+                            state.set_status_message(&format!("Pager error: {}", e));
+                        } else {
+                            enable_raw_mode()?;
+                            execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+                            terminal.clear()?;
+                        }
+                    }
+                }
+                Err(e) => {
+                    state.set_status_message(&format!("Error: {}", e));
+                }
+            }
+        }
+        // 手動リフレッシュ
+        KeyCode::Char('R') => {
+            if let Err(e) = state.refresh_stash() {
+                state.set_status_message(&format!("Error: {}", e));
+            } else {
+                state.set_status_message("Refreshed");
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Stash 入力モードのキー処理
+fn handle_stash_input_keys(state: &mut AppState, key: &event::KeyEvent) -> Result<()> {
+    match key.code {
+        KeyCode::Enter => {
+            // メッセージを確定して stash push を実行
+            if let Err(e) = state.stash_push() {
+                state.set_status_message(&format!("Error: {}", e));
+            }
+        }
+        KeyCode::Esc => {
+            state.cancel_stash_input();
+        }
+        KeyCode::Backspace => {
+            state.stash_message_pop();
+        }
+        KeyCode::Char(c) => {
+            state.stash_message_push(c);
+        }
+        _ => {}
+    }
     Ok(())
 }
 

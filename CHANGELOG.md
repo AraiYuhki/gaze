@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-02-05
+
+### Added
+
+- **Stash View（Phase 7）**
+  - `4` キーで Stash View に切り替え
+  - stash 一覧の表示（ブランチ名、メッセージ付き）
+  - `s` キーで現在の変更を stash に保存（メッセージ入力ダイアログ付き）
+  - `p` キーで stash を適用して削除（pop）
+  - `a` キーで stash を適用（削除せず）
+  - `d` キーで stash を削除（確認ダイアログ付き）
+  - `Enter` キーで stash の内容を表示（色付き差分）
+
 ## [0.4.0] - 2026-02-05
 
 ### Added

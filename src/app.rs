@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use crate::cli::{parse_log, parse_status, GitCli};
-use crate::domain::{FileStatus, GraphLine, NodeKind, StatusKind, TreeNode};
+use crate::cli::{parse_log, parse_stash_list, parse_status, GitCli};
+use crate::domain::{FileStatus, GraphLine, NodeKind, StashEntry, StatusKind, TreeNode};
 use crate::error::Result;
 use crate::filter::DisplayFilter;
 use crate::ui::tree_view;
@@ -12,6 +12,7 @@ pub enum View {
     Status,
     Tree,
     Log,
+    Stash,
 }
 
 /// 確認ダイアログの状態
@@ -25,6 +26,8 @@ pub enum ConfirmDialog {
     Checkout { commit_hash: String },
     /// Amend 確認
     Amend,
+    /// Stash 削除の確認
+    DropStash { stash_index: usize },
 }
 
 /// コミットモードの種類
@@ -36,6 +39,15 @@ pub enum CommitMode {
     Normal,
     /// Amend コミット
     Amend,
+}
+
+/// Stash メッセージ入力モード
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StashInputMode {
+    /// 入力モードではない
+    None,
+    /// Stash push 用のメッセージ入力
+    Push,
 }
 
 /// Log View で取得するコミット数
@@ -92,6 +104,14 @@ pub struct AppState {
     pub commit_file_index: usize,
     /// コミット画面でファイル一覧にフォーカスしているか
     pub commit_focus_files: bool,
+    /// Stash 一覧のキャッシュ
+    pub stash_cache: Vec<StashEntry>,
+    /// Stash View での選択インデックス
+    pub stash_selected_index: usize,
+    /// Stash メッセージ入力モード
+    pub stash_input_mode: StashInputMode,
+    /// Stash メッセージ
+    pub stash_message: String,
 }
 
 impl AppState {
@@ -139,6 +159,10 @@ impl AppState {
             commit_cursor_y: 0,
             commit_file_index: 0,
             commit_focus_files: false,
+            stash_cache: Vec::new(),
+            stash_selected_index: 0,
+            stash_input_mode: StashInputMode::None,
+            stash_message: String::new(),
         };
         // 起動時に1回だけ status を取得
         state.refresh_status()?;
@@ -181,6 +205,10 @@ impl AppState {
                 }
                 View::Status => {
                     let _ = self.refresh_status();
+                }
+                View::Stash => {
+                    // Stash View 切り替え時に stash 一覧を取得
+                    let _ = self.refresh_stash();
                 }
             }
         }
@@ -225,6 +253,12 @@ impl AppState {
                         (self.log_selected_index + 1).min(self.log_cache.len() - 1);
                 }
             }
+            View::Stash => {
+                if !self.stash_cache.is_empty() {
+                    self.stash_selected_index =
+                        (self.stash_selected_index + 1).min(self.stash_cache.len() - 1);
+                }
+            }
         }
     }
 
@@ -240,6 +274,9 @@ impl AppState {
             View::Log => {
                 self.log_selected_index = self.log_selected_index.saturating_sub(1);
             }
+            View::Stash => {
+                self.stash_selected_index = self.stash_selected_index.saturating_sub(1);
+            }
         }
     }
 
@@ -254,6 +291,9 @@ impl AppState {
             }
             View::Log => {
                 self.log_selected_index = 0;
+            }
+            View::Stash => {
+                self.stash_selected_index = 0;
             }
         }
     }
@@ -275,6 +315,11 @@ impl AppState {
             View::Log => {
                 if !self.log_cache.is_empty() {
                     self.log_selected_index = self.log_cache.len() - 1;
+                }
+            }
+            View::Stash => {
+                if !self.stash_cache.is_empty() {
+                    self.stash_selected_index = self.stash_cache.len() - 1;
                 }
             }
         }
@@ -915,6 +960,134 @@ impl AppState {
             let path_str = file.path.to_string_lossy();
             self.git
                 .execute(&["diff", "--staged", "--color=always", &path_str])
+        } else {
+            Ok(String::new())
+        }
+    }
+
+    // --- Stash 関連メソッド ---
+
+    /// Stash 一覧を再取得してキャッシュを更新する
+    pub fn refresh_stash(&mut self) -> Result<()> {
+        let output = self.git.execute(&["stash", "list"])?;
+        self.stash_cache = parse_stash_list(&output);
+        // 選択インデックスが範囲外になった場合は調整
+        if !self.stash_cache.is_empty() && self.stash_selected_index >= self.stash_cache.len() {
+            self.stash_selected_index = self.stash_cache.len() - 1;
+        }
+        Ok(())
+    }
+
+    /// 現在選択されている Stash エントリを取得
+    pub fn selected_stash(&self) -> Option<&StashEntry> {
+        self.stash_cache.get(self.stash_selected_index)
+    }
+
+    /// Stash メッセージ入力モードを開始
+    pub fn start_stash_push(&mut self) {
+        self.stash_input_mode = StashInputMode::Push;
+        self.stash_message.clear();
+    }
+
+    /// Stash メッセージ入力をキャンセル
+    pub fn cancel_stash_input(&mut self) {
+        self.stash_input_mode = StashInputMode::None;
+        self.stash_message.clear();
+    }
+
+    /// Stash メッセージに文字を追加
+    pub fn stash_message_push(&mut self, c: char) {
+        self.stash_message.push(c);
+    }
+
+    /// Stash メッセージから文字を削除
+    pub fn stash_message_pop(&mut self) {
+        self.stash_message.pop();
+    }
+
+    /// 現在の変更を stash に保存
+    ///
+    /// # Errors
+    /// - Git コマンドの実行に失敗した場合
+    pub fn stash_push(&mut self) -> Result<()> {
+        if self.stash_message.is_empty() {
+            self.git.execute(&["stash", "push"])?;
+        } else {
+            self.git
+                .execute(&["stash", "push", "-m", &self.stash_message])?;
+        }
+        self.stash_input_mode = StashInputMode::None;
+        self.stash_message.clear();
+        self.refresh_stash()?;
+        self.refresh_status()?;
+        self.set_status_message("Changes stashed");
+        Ok(())
+    }
+
+    /// 選択した stash を適用して削除（pop）
+    ///
+    /// # Errors
+    /// - Git コマンドの実行に失敗した場合
+    pub fn stash_pop(&mut self) -> Result<()> {
+        if let Some(entry) = self.stash_cache.get(self.stash_selected_index) {
+            let stash_ref = format!("stash@{{{}}}", entry.index);
+            self.git.execute(&["stash", "pop", &stash_ref])?;
+            self.refresh_stash()?;
+            self.refresh_status()?;
+            self.set_status_message("Stash popped");
+        }
+        Ok(())
+    }
+
+    /// 選択した stash を適用（削除せず）
+    ///
+    /// # Errors
+    /// - Git コマンドの実行に失敗した場合
+    pub fn stash_apply(&mut self) -> Result<()> {
+        if let Some(entry) = self.stash_cache.get(self.stash_selected_index) {
+            let stash_ref = format!("stash@{{{}}}", entry.index);
+            self.git.execute(&["stash", "apply", &stash_ref])?;
+            self.refresh_status()?;
+            self.set_status_message("Stash applied");
+        }
+        Ok(())
+    }
+
+    /// Stash 削除の確認ダイアログを表示
+    pub fn show_stash_drop_confirm(&mut self) {
+        if self.selected_stash().is_some() {
+            self.confirm_dialog = ConfirmDialog::DropStash {
+                stash_index: self.stash_selected_index,
+            };
+        }
+    }
+
+    /// 選択した stash を削除
+    ///
+    /// # Errors
+    /// - Git コマンドの実行に失敗した場合
+    pub fn stash_drop(&mut self) -> Result<()> {
+        if let ConfirmDialog::DropStash { stash_index } = self.confirm_dialog {
+            if let Some(entry) = self.stash_cache.get(stash_index) {
+                let stash_ref = format!("stash@{{{}}}", entry.index);
+                self.git.execute(&["stash", "drop", &stash_ref])?;
+                self.confirm_dialog = ConfirmDialog::None;
+                self.refresh_stash()?;
+                self.set_status_message("Stash dropped");
+            }
+        }
+        Ok(())
+    }
+
+    /// 選択した stash の内容を取得（色付き）
+    ///
+    /// # Errors
+    /// - Git コマンドの実行に失敗した場合
+    pub fn get_stash_show(&self) -> Result<String> {
+        if let Some(entry) = self.stash_cache.get(self.stash_selected_index) {
+            let stash_ref = format!("stash@{{{}}}", entry.index);
+            self.git
+                .execute(&["stash", "show", "-p", "--color=always", &stash_ref])
         } else {
             Ok(String::new())
         }
