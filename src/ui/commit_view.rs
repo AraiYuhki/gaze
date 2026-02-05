@@ -54,7 +54,7 @@ fn render_title(f: &mut Frame, state: &AppState, area: Rect) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
 
-    let help_text = "Tab: switch focus | Ctrl+Enter: commit | Esc: cancel";
+    let help_text = "Tab: switch focus | Ctrl+D: commit | Esc: cancel";
     let paragraph = Paragraph::new(help_text)
         .style(Style::default().fg(Color::DarkGray))
         .block(block);
