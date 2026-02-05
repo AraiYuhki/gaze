@@ -24,6 +24,16 @@ impl Pager {
         Self { command }
     }
 
+    /// 指定されたコマンドで Pager を作成する
+    ///
+    /// 設定ファイルからコマンドを指定する場合に使用
+    pub fn with_command(command: Option<String>) -> Self {
+        match command {
+            Some(cmd) if !cmd.is_empty() => Self { command: cmd },
+            _ => Self::new(),
+        }
+    }
+
     /// OS に応じたデフォルトページャを返す
     fn default_pager() -> String {
         if cfg!(target_os = "windows") {

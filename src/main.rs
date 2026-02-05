@@ -18,6 +18,7 @@ mod pager;
 mod ui;
 
 use app::{AppState, ConfirmDialog, View};
+use config::Settings;
 use pager::Pager;
 
 fn main() -> Result<()> {
@@ -28,6 +29,15 @@ fn main() -> Result<()> {
         let _ = execute!(io::stdout(), LeaveAlternateScreen);
         original_hook(panic);
     }));
+
+    // 設定ファイルの読み込み
+    let settings = match Settings::load() {
+        Ok(settings) => settings,
+        Err(e) => {
+            eprintln!("Warning: Failed to load config: {}", e);
+            Settings::default()
+        }
+    };
 
     // Git リポジトリの検出
     let current_dir = std::env::current_dir()?;
@@ -45,7 +55,7 @@ fn main() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let result = run_app(&mut terminal, &mut state);
+    let result = run_app(&mut terminal, &mut state, &settings);
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -56,15 +66,22 @@ fn main() -> Result<()> {
 fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     state: &mut AppState,
+    settings: &Settings,
 ) -> Result<()> {
-    let pager = Pager::new();
+    let pager = Pager::with_command(settings.pager.command.clone());
 
     loop {
         // 描画（View に応じて切り替え）
-        terminal.draw(|f| match state.current_view {
-            View::Status => ui::status_view::render(f, state),
-            View::Tree => ui::tree_view::render(f, state),
-            View::Log => ui::log_view::render(f, state),
+        terminal.draw(|f| {
+            match state.current_view {
+                View::Status => ui::status_view::render(f, state),
+                View::Tree => ui::tree_view::render(f, state),
+                View::Log => ui::log_view::render(f, state),
+            }
+            // ヘルプ画面をオーバーレイ表示
+            if state.show_help {
+                ui::help_view::render(f);
+            }
         })?;
 
         // 終了フラグのチェック
@@ -74,6 +91,12 @@ fn run_app(
 
         // イベント処理
         if let Event::Key(key) = event::read()? {
+            // ヘルプ画面表示中は任意のキーで閉じる
+            if state.show_help {
+                state.show_help = false;
+                continue;
+            }
+
             // 確認ダイアログ表示中の場合
             match &state.confirm_dialog {
                 ConfirmDialog::DiscardChanges { .. } => {
@@ -124,6 +147,20 @@ fn run_app(
                 }
                 KeyCode::Char('3') => {
                     state.switch_view(View::Log);
+                    continue;
+                }
+                KeyCode::Tab => {
+                    // Tab で順次切り替え: Status -> Tree -> Log -> Status
+                    let next_view = match state.current_view {
+                        View::Status => View::Tree,
+                        View::Tree => View::Log,
+                        View::Log => View::Status,
+                    };
+                    state.switch_view(next_view);
+                    continue;
+                }
+                KeyCode::Char('?') => {
+                    state.show_help = true;
                     continue;
                 }
                 KeyCode::Char('q') => {

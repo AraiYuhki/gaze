@@ -1,14 +1,126 @@
-# gaze
+# Gaze
 
-A lightweight Git TUI tool that delegates all operations to the git CLI.
+軽量な Git 操作補助 TUI ツール
 
-gaze provides a simple terminal interface for everyday Git tasks:
-- **Status View**: Stage, unstage, and discard changes
-- **Tree View**: Browse repository files with lazy-loading
-- **Log View**: Explore commit history with graph visualization
+## 概要
 
-## Philosophy
+Gaze は Git リポジトリの状態確認と基本操作を提供するターミナルユーザーインターフェースです。
 
-- **CLI delegation**: All Git operations go through the `git` command
-- **Minimal footprint**: No libgit2, no gitoxide, just process calls
-- **Explicit exclusions**: submodule and LFS are intentionally unsupported
+- **Status View**: 変更されたファイルの一覧表示、ステージング/アンステージング、差分表示
+- **Tree View**: ディレクトリツリー形式でのファイル表示（Git ステータス付き）
+- **Log View**: コミット履歴のグラフ表示、コミット詳細の確認
+
+## インストール
+
+### ビルド
+
+```bash
+git clone https://github.com/yourusername/gaze.git
+cd gaze
+cargo build --release
+```
+
+### 実行
+
+```bash
+./target/release/gaze
+```
+
+または、パスの通った場所にコピー:
+
+```bash
+cp ./target/release/gaze ~/.local/bin/
+```
+
+## 使用方法
+
+Git リポジトリ内で `gaze` を実行します:
+
+```bash
+cd /path/to/your/repo
+gaze
+```
+
+## キーバインド
+
+### 共通
+
+| キー | 動作 |
+|------|------|
+| `1` | Status View に切り替え |
+| `2` | Tree View に切り替え |
+| `3` | Log View に切り替え |
+| `Tab` | 次の View に切り替え |
+| `?` | ヘルプ画面を表示 |
+| `q` | 終了 |
+| `Ctrl+C` | 終了 |
+
+### Status View
+
+| キー | 動作 |
+|------|------|
+| `j` / `↓` | 下に移動 |
+| `k` / `↑` | 上に移動 |
+| `g` | 先頭に移動 |
+| `G` | 末尾に移動 |
+| `s` | ステージ/アンステージの切り替え |
+| `d` | 差分を表示（外部ページャ） |
+| `r` | 変更を破棄（確認ダイアログあり） |
+| `R` | リフレッシュ |
+
+### Tree View
+
+| キー | 動作 |
+|------|------|
+| `j` / `↓` | 下に移動 |
+| `k` / `↑` | 上に移動 |
+| `g` | 先頭に移動 |
+| `G` | 末尾に移動 |
+| `Enter` / `l` | ディレクトリを展開 |
+| `h` | ディレクトリを折りたたむ |
+| `H` | 表示フィルタの切り替え |
+| `R` | リフレッシュ |
+
+### Log View
+
+| キー | 動作 |
+|------|------|
+| `j` / `↓` | 下に移動 |
+| `k` / `↑` | 上に移動 |
+| `g` | 先頭に移動 |
+| `G` | 末尾に移動 |
+| `Enter` | コミット詳細を表示（外部ページャ） |
+| `c` | チェックアウト（確認ダイアログあり） |
+| `R` | リフレッシュ |
+
+## 設定
+
+設定ファイルは `~/.config/git-tui/config.toml` に配置します。
+
+### 設定例
+
+```toml
+[pager]
+# 外部ページャコマンド（デフォルト: $GIT_PAGER, $PAGER, または less）
+command = "less -R"
+```
+
+### 表示フィルタ
+
+Tree View で特定のファイル/ディレクトリを非表示にするには、`~/.config/git-tui/display_ignore` にパターンを記述します:
+
+```
+node_modules
+.DS_Store
+*.log
+target
+```
+
+## 動作要件
+
+- Git がインストールされていること
+- Git リポジトリ内で実行すること
+
+## ライセンス
+
+MIT License

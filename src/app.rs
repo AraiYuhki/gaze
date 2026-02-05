@@ -57,6 +57,8 @@ pub struct AppState {
     pub log_cache: Vec<GraphLine>,
     /// Log View での選択インデックス
     pub log_selected_index: usize,
+    /// ヘルプ画面表示フラグ
+    pub show_help: bool,
 }
 
 impl AppState {
@@ -93,6 +95,7 @@ impl AppState {
             display_filter: DisplayFilter::load(),
             log_cache: Vec::new(),
             log_selected_index: 0,
+            show_help: false,
         };
         // 起動時に1回だけ status を取得
         state.refresh_status()?;

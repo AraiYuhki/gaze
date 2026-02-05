@@ -1,1 +1,3 @@
-// TODO(Phase 4): settings モジュールを追加
+mod settings;
+
+pub use settings::Settings;
