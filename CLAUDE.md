@@ -931,6 +931,60 @@ cargo clippy -- -D warnings
 
 ---
 
+### Phase 6: 差分表示の改善
+
+#### 6-1: 差分の色分け表示
+
+**実装方針**:
+- `git diff --color=always` オプションを使用して色付き出力を取得
+- ANSIカラーコードを含んだ出力をそのままページャに渡す
+- ページャ側で色コードを解釈して表示
+
+**対象箇所**:
+1. Status View の差分表示（`d` キー）
+2. コミットモードの staged diff（`d` キー）
+3. Log View のコミット詳細表示（Enter キー）
+
+**実装例**:
+```rust
+// 差分取得時に --color=always を追加
+pub fn get_diff(&self) -> Result<String> {
+    if let Some(file) = self.selected_file() {
+        let path_str = file.path.to_string_lossy();
+        if file.index != StatusKind::Unmodified && file.index != StatusKind::Untracked {
+            self.git.execute(&["diff", "--cached", "--color=always", path_str.as_ref()])
+        } else {
+            self.git.execute(&["diff", "--color=always", path_str.as_ref()])
+        }
+    } else {
+        Ok(String::new())
+    }
+}
+```
+
+#### 6-2: デフォルトページャ設定の改善
+
+**変更内容**:
+- Unix系のデフォルトページャを `less` から `less -R` に変更
+- `-R` オプションにより ANSI カラーコードを解釈して色付き表示
+
+```rust
+fn default_pager() -> String {
+    if cfg!(target_os = "windows") {
+        "more".to_string()  // Windows は色対応が限定的
+    } else {
+        "less -R".to_string()  // -R で色付き出力対応
+    }
+}
+```
+
+**注意点**:
+- 環境変数 `$PAGER` や設定ファイルでユーザーがページャを指定している場合は、
+  ユーザー設定を優先する（`-R` は自動付与しない）
+- `git show` も同様に `--color=always` を付与する
+
+---
+
 ## 重要な制約（常に遵守）
 
 ### Git Status 取得タイミング

@@ -35,11 +35,13 @@ impl Pager {
     }
 
     /// OS に応じたデフォルトページャを返す
+    ///
+    /// Unix系では `less -R` を使用し、ANSIカラーコードを解釈して色付き表示する
     fn default_pager() -> String {
         if cfg!(target_os = "windows") {
             "more".to_string()
         } else {
-            "less".to_string()
+            "less -R".to_string()
         }
     }
 
@@ -96,10 +98,10 @@ mod tests {
     }
 
     #[test]
-    fn test_default_pager_is_less_on_unix() {
+    fn test_default_pager_is_less_with_color_on_unix() {
         if !cfg!(target_os = "windows") {
             let pager = Pager::default_pager();
-            assert_eq!(pager, "less");
+            assert_eq!(pager, "less -R");
         }
     }
 }
