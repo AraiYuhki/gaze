@@ -12,23 +12,38 @@ Gaze は Git リポジトリの状態確認と基本操作を提供するター�
 
 ## インストール
 
-### ビルド
+### シェルスクリプト（macOS / Linux）
 
 ```bash
-git clone https://github.com/yourusername/gaze.git
+curl -fsSL https://raw.githubusercontent.com/AraiYuhki/gaze/master/install.sh | sh
+```
+
+デフォルトでは `~/.local/bin` にインストールされます。インストール先を変更する場合:
+
+```bash
+INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/AraiYuhki/gaze/master/install.sh | sh
+```
+
+### Scoop（Windows）
+
+```powershell
+# バケットを追加（初回のみ）
+scoop bucket add gaze https://github.com/AraiYuhki/gaze
+
+# インストール
+scoop install gaze
+```
+
+### GitHub Releases
+
+[Releases](https://github.com/AraiYuhki/gaze/releases) から各プラットフォーム向けのバイナリをダウンロードできます。
+
+### ソースからビルド
+
+```bash
+git clone https://github.com/AraiYuhki/gaze.git
 cd gaze
 cargo build --release
-```
-
-### 実行
-
-```bash
-./target/release/gaze
-```
-
-または、パスの通った場所にコピー:
-
-```bash
 cp ./target/release/gaze ~/.local/bin/
 ```
 

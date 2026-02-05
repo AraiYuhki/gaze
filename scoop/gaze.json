@@ -1,0 +1,21 @@
+{
+    "version": "0.2.0",
+    "description": "A lightweight Git TUI tool",
+    "homepage": "https://github.com/AraiYuhki/gaze",
+    "license": "MIT",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/AraiYuhki/gaze/releases/download/v0.2.0/gaze-x86_64-pc-windows-msvc.zip",
+            "hash": ""
+        }
+    },
+    "bin": "gaze.exe",
+    "checkver": "github",
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/AraiYuhki/gaze/releases/download/v$version/gaze-x86_64-pc-windows-msvc.zip"
+            }
+        }
+    }
+}
