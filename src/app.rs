@@ -59,6 +59,14 @@ pub struct AppState {
     pub log_selected_index: usize,
     /// ヘルプ画面表示フラグ
     pub show_help: bool,
+    /// Tree View 検索モード
+    pub tree_search_mode: bool,
+    /// Tree View 検索文字列
+    pub tree_search_query: String,
+    /// Tree View 検索マッチインデックスリスト
+    pub tree_search_matches: Vec<usize>,
+    /// Tree View 現在のマッチインデックス
+    pub tree_search_current_match: usize,
 }
 
 impl AppState {
@@ -96,6 +104,10 @@ impl AppState {
             log_cache: Vec::new(),
             log_selected_index: 0,
             show_help: false,
+            tree_search_mode: false,
+            tree_search_query: String::new(),
+            tree_search_matches: Vec::new(),
+            tree_search_current_match: 0,
         };
         // 起動時に1回だけ status を取得
         state.refresh_status()?;
@@ -437,6 +449,90 @@ impl AppState {
             self.refresh_status()?;
         }
         Ok(())
+    }
+
+    // --- Tree View 検索用メソッド ---
+
+    /// 検索モードを開始する
+    pub fn start_tree_search(&mut self) {
+        self.tree_search_mode = true;
+        self.tree_search_query.clear();
+        self.tree_search_matches.clear();
+        self.tree_search_current_match = 0;
+    }
+
+    /// 検索をキャンセルする
+    pub fn cancel_tree_search(&mut self) {
+        self.tree_search_mode = false;
+        self.tree_search_query.clear();
+        self.tree_search_matches.clear();
+        self.tree_search_current_match = 0;
+    }
+
+    /// 検索を確定し、最初のマッチへジャンプする
+    pub fn confirm_tree_search(&mut self) {
+        self.tree_search_mode = false;
+        if !self.tree_search_matches.is_empty() {
+            self.tree_selected_index = self.tree_search_matches[self.tree_search_current_match];
+        }
+    }
+
+    /// 検索文字列に文字を追加する
+    pub fn add_tree_search_char(&mut self, c: char) {
+        self.tree_search_query.push(c);
+        self.update_tree_search_matches();
+    }
+
+    /// 検索文字列の末尾を削除する
+    pub fn remove_tree_search_char(&mut self) {
+        self.tree_search_query.pop();
+        self.update_tree_search_matches();
+    }
+
+    /// 次のマッチへ移動する
+    pub fn next_tree_search_match(&mut self) {
+        if !self.tree_search_matches.is_empty() {
+            self.tree_search_current_match =
+                (self.tree_search_current_match + 1) % self.tree_search_matches.len();
+            self.tree_selected_index = self.tree_search_matches[self.tree_search_current_match];
+        }
+    }
+
+    /// 前のマッチへ移動する
+    pub fn prev_tree_search_match(&mut self) {
+        if !self.tree_search_matches.is_empty() {
+            if self.tree_search_current_match == 0 {
+                self.tree_search_current_match = self.tree_search_matches.len() - 1;
+            } else {
+                self.tree_search_current_match -= 1;
+            }
+            self.tree_selected_index = self.tree_search_matches[self.tree_search_current_match];
+        }
+    }
+
+    /// 検索マッチリストを更新する
+    fn update_tree_search_matches(&mut self) {
+        self.tree_search_matches.clear();
+        self.tree_search_current_match = 0;
+
+        if self.tree_search_query.is_empty() {
+            return;
+        }
+
+        let query_lower = self.tree_search_query.to_lowercase();
+        let flat = tree_view::flatten_tree(&self.tree_root, &self.display_filter, 0);
+
+        for (index, (node, _depth)) in flat.iter().enumerate() {
+            let name_lower = node.name.to_lowercase();
+            if name_lower.contains(&query_lower) {
+                self.tree_search_matches.push(index);
+            }
+        }
+
+        // 最初のマッチへジャンプ（検索モード中）
+        if !self.tree_search_matches.is_empty() {
+            self.tree_selected_index = self.tree_search_matches[0];
+        }
     }
 
     /// Status キャッシュをツリーに適用する

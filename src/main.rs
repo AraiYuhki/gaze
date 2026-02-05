@@ -265,6 +265,33 @@ fn handle_status_view_keys(
 
 /// Tree View のキー処理
 fn handle_tree_view_keys(state: &mut AppState, code: KeyCode) {
+    // 検索モード中の処理
+    if state.tree_search_mode {
+        match code {
+            KeyCode::Esc => {
+                state.cancel_tree_search();
+            }
+            KeyCode::Enter => {
+                state.confirm_tree_search();
+                let match_count = state.tree_search_matches.len();
+                if match_count > 0 {
+                    state.set_status_message(&format!("Found {} match(es)", match_count));
+                } else {
+                    state.set_status_message("No matches found");
+                }
+            }
+            KeyCode::Backspace => {
+                state.remove_tree_search_char();
+            }
+            KeyCode::Char(c) => {
+                state.add_tree_search_char(c);
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // 通常モードの処理
     match code {
         // ナビゲーション
         KeyCode::Char('j') | KeyCode::Down => {
@@ -299,6 +326,32 @@ fn handle_tree_view_keys(state: &mut AppState, code: KeyCode) {
                 "Filter OFF"
             };
             state.set_status_message(status);
+        }
+        // 検索
+        KeyCode::Char('/') => {
+            state.start_tree_search();
+        }
+        // 次のマッチへ
+        KeyCode::Char('n') => {
+            if !state.tree_search_matches.is_empty() {
+                state.next_tree_search_match();
+                state.set_status_message(&format!(
+                    "Match {}/{}",
+                    state.tree_search_current_match + 1,
+                    state.tree_search_matches.len()
+                ));
+            }
+        }
+        // 前のマッチへ
+        KeyCode::Char('N') => {
+            if !state.tree_search_matches.is_empty() {
+                state.prev_tree_search_match();
+                state.set_status_message(&format!(
+                    "Match {}/{}",
+                    state.tree_search_current_match + 1,
+                    state.tree_search_matches.len()
+                ));
+            }
         }
         // 手動リフレッシュ
         KeyCode::Char('R') => {

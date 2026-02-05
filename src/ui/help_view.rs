@@ -48,6 +48,8 @@ pub fn render(f: &mut Frame) {
         Line::from("  Enter, l   Expand"),
         Line::from("  h          Collapse"),
         Line::from("  H          Toggle filter"),
+        Line::from("  /          Search"),
+        Line::from("  n/N        Next/Prev match"),
         Line::from(""),
         Line::from(vec![Span::styled(
             "=== Log View ===",

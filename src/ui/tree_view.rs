@@ -12,16 +12,33 @@ use crate::filter::DisplayFilter;
 
 /// Tree View を描画する
 pub fn render(f: &mut Frame, state: &AppState) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
+    // 検索モード中は検索バーを表示
+    let constraints = if state.tree_search_mode {
+        vec![
+            Constraint::Min(3),    // メインコンテンツ
+            Constraint::Length(1), // 検索バー
+            Constraint::Length(1), // ステータスバー
+        ]
+    } else {
+        vec![
             Constraint::Min(3),    // メインコンテンツ
             Constraint::Length(1), // ステータスバー
-        ])
+        ]
+    };
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
         .split(f.area());
 
     render_tree(f, state, chunks[0]);
-    render_status_bar(f, state, chunks[1]);
+
+    if state.tree_search_mode {
+        render_search_bar(f, state, chunks[1]);
+        render_status_bar(f, state, chunks[2]);
+    } else {
+        render_status_bar(f, state, chunks[1]);
+    }
 }
 
 /// ツリーを描画する
@@ -33,7 +50,14 @@ fn render_tree(f: &mut Frame, state: &AppState, area: Rect) {
         .enumerate()
         .map(|(index, (node, depth))| {
             let is_selected = index == state.tree_selected_index;
-            render_tree_item(node, *depth, is_selected)
+            let is_match = state.tree_search_matches.contains(&index);
+            render_tree_item(
+                node,
+                *depth,
+                is_selected,
+                is_match,
+                &state.tree_search_query,
+            )
         })
         .collect();
 
@@ -43,17 +67,33 @@ fn render_tree(f: &mut Frame, state: &AppState, area: Rect) {
         ""
     };
 
+    let search_status = if !state.tree_search_matches.is_empty() {
+        format!(
+            " [{}/{}]",
+            state.tree_search_current_match + 1,
+            state.tree_search_matches.len()
+        )
+    } else {
+        String::new()
+    };
+
     let list = List::new(items).block(
         Block::default()
             .borders(Borders::ALL)
-            .title(format!(" Tree (2){} ", filter_status)),
+            .title(format!(" Tree (2){}{} ", filter_status, search_status)),
     );
 
     f.render_widget(list, area);
 }
 
 /// ツリーアイテムを描画する
-fn render_tree_item(node: &TreeNode, depth: usize, is_selected: bool) -> ListItem<'static> {
+fn render_tree_item(
+    node: &TreeNode,
+    depth: usize,
+    is_selected: bool,
+    is_match: bool,
+    search_query: &str,
+) -> ListItem<'static> {
     // インデント
     let indent = "  ".repeat(depth);
 
@@ -80,21 +120,37 @@ fn render_tree_item(node: &TreeNode, depth: usize, is_selected: bool) -> ListIte
     };
 
     // 名前のスタイル
+    let base_color = if node.kind == NodeKind::Directory {
+        Color::Blue
+    } else {
+        Color::White
+    };
+
     let name_style = if is_selected {
         Style::default()
             .fg(Color::White)
             .add_modifier(Modifier::BOLD)
-    } else if node.kind == NodeKind::Directory {
-        Style::default().fg(Color::Blue)
+    } else if is_match {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::White)
+        Style::default().fg(base_color)
+    };
+
+    // 検索クエリがある場合はマッチ部分をハイライト
+    let name_spans = if is_match && !search_query.is_empty() && !is_selected {
+        highlight_match(&node.name, search_query, name_style, base_color)
+    } else {
+        vec![Span::styled(node.name.clone(), name_style)]
     };
 
     let mut spans = vec![
         Span::raw(indent),
         Span::styled(icon, Style::default().fg(Color::Cyan)),
-        Span::styled(node.name.clone(), name_style),
     ];
+    spans.extend(name_spans);
 
     if !status_indicator.is_empty() {
         spans.push(Span::raw(" "));
@@ -114,16 +170,89 @@ fn render_tree_item(node: &TreeNode, depth: usize, is_selected: bool) -> ListIte
     }
 }
 
+/// マッチ部分をハイライトした Span のリストを返す
+fn highlight_match(
+    text: &str,
+    query: &str,
+    match_style: Style,
+    normal_color: Color,
+) -> Vec<Span<'static>> {
+    let text_lower = text.to_lowercase();
+    let query_lower = query.to_lowercase();
+
+    let mut spans = Vec::new();
+    let mut last_end = 0;
+
+    // 大文字小文字を無視してマッチ位置を検索
+    for (start, _) in text_lower.match_indices(&query_lower) {
+        // マッチ前のテキスト
+        if start > last_end {
+            spans.push(Span::styled(
+                text[last_end..start].to_string(),
+                Style::default().fg(normal_color),
+            ));
+        }
+        // マッチ部分
+        let end = start + query.len();
+        spans.push(Span::styled(text[start..end].to_string(), match_style));
+        last_end = end;
+    }
+
+    // マッチ後のテキスト
+    if last_end < text.len() {
+        spans.push(Span::styled(
+            text[last_end..].to_string(),
+            Style::default().fg(normal_color),
+        ));
+    }
+
+    if spans.is_empty() {
+        vec![Span::styled(
+            text.to_string(),
+            Style::default().fg(normal_color),
+        )]
+    } else {
+        spans
+    }
+}
+
 /// ステータスバーを描画する
 fn render_status_bar(f: &mut Frame, state: &AppState, area: Rect) {
     let message = state
         .status_message
         .as_deref()
-        .unwrap_or("j/k:move Enter/l:expand h:collapse H:filter 1:status q:quit");
+        .unwrap_or("j/k:move Enter/l:expand h:collapse /:search n/N:next/prev q:quit");
 
     let status_bar = Paragraph::new(message).style(Style::default().fg(Color::Cyan));
 
     f.render_widget(status_bar, area);
+}
+
+/// 検索バーを描画する
+fn render_search_bar(f: &mut Frame, state: &AppState, area: Rect) {
+    let match_info = if state.tree_search_matches.is_empty() {
+        if state.tree_search_query.is_empty() {
+            String::new()
+        } else {
+            " (no match)".to_string()
+        }
+    } else {
+        format!(
+            " ({}/{})",
+            state.tree_search_current_match + 1,
+            state.tree_search_matches.len()
+        )
+    };
+
+    let search_text = format!("/{}{}", state.tree_search_query, match_info);
+
+    let search_bar = Paragraph::new(search_text).style(
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    );
+
+    f.render_widget(search_bar, area);
 }
 
 /// ツリーをフラット化する（表示用）
