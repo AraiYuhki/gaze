@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use crate::cli::{parse_status, GitCli};
-use crate::domain::{FileStatus, NodeKind, StatusKind, TreeNode};
+use crate::cli::{parse_log, parse_status, GitCli};
+use crate::domain::{FileStatus, GraphLine, NodeKind, StatusKind, TreeNode};
 use crate::error::Result;
 use crate::filter::DisplayFilter;
 use crate::ui::tree_view;
@@ -11,7 +11,7 @@ use crate::ui::tree_view;
 pub enum View {
     Status,
     Tree,
-    // TODO(Phase 3): Log を追加
+    Log,
 }
 
 /// 確認ダイアログの状態
@@ -21,14 +21,19 @@ pub enum ConfirmDialog {
     None,
     /// 変更破棄の確認
     DiscardChanges { file_index: usize },
+    /// チェックアウトの確認
+    Checkout { commit_hash: String },
 }
+
+/// Log View で取得するコミット数
+const LOG_LIMIT: usize = 200;
 
 /// アプリケーション全体の状態
 pub struct AppState {
     /// Git CLI 実行インスタンス
     git: GitCli,
     /// リポジトリルートパス
-    #[allow(dead_code)] // TODO(Phase 3): Log View で使用予定
+    #[allow(dead_code)] // 将来のリファクタリングや拡張で使用予定
     repo_root: std::path::PathBuf,
     /// 現在の View
     pub current_view: View,
@@ -48,6 +53,10 @@ pub struct AppState {
     pub tree_selected_index: usize,
     /// 表示フィルタ
     pub display_filter: DisplayFilter,
+    /// Log View のキャッシュ
+    pub log_cache: Vec<GraphLine>,
+    /// Log View での選択インデックス
+    pub log_selected_index: usize,
 }
 
 impl AppState {
@@ -82,6 +91,8 @@ impl AppState {
             tree_root,
             tree_selected_index: 0,
             display_filter: DisplayFilter::load(),
+            log_cache: Vec::new(),
+            log_selected_index: 0,
         };
         // 起動時に1回だけ status を取得
         state.refresh_status()?;
@@ -112,12 +123,39 @@ impl AppState {
         if self.current_view != view {
             self.current_view = view;
             self.clear_status_message();
-            // View 切り替え時に status を更新してツリーに適用
-            if view == View::Tree {
-                let _ = self.refresh_status();
-                self.apply_status_to_tree();
+            match view {
+                View::Tree => {
+                    // Tree View 切り替え時に status を更新してツリーに適用
+                    let _ = self.refresh_status();
+                    self.apply_status_to_tree();
+                }
+                View::Log => {
+                    // Log View 切り替え時にログを取得
+                    let _ = self.refresh_log();
+                }
+                View::Status => {
+                    let _ = self.refresh_status();
+                }
             }
         }
+    }
+
+    /// Git log を再取得してキャッシュを更新する
+    pub fn refresh_log(&mut self) -> Result<()> {
+        let output = self.git.execute(&[
+            "log",
+            "--oneline",
+            "--graph",
+            "--all",
+            "-n",
+            &LOG_LIMIT.to_string(),
+        ])?;
+        self.log_cache = parse_log(&output);
+        // 選択インデックスが範囲外になった場合は調整
+        if !self.log_cache.is_empty() && self.log_selected_index >= self.log_cache.len() {
+            self.log_selected_index = self.log_cache.len() - 1;
+        }
+        Ok(())
     }
 
     /// 選択を1つ下に移動
@@ -135,6 +173,12 @@ impl AppState {
                     self.tree_selected_index = (self.tree_selected_index + 1).min(max - 1);
                 }
             }
+            View::Log => {
+                if !self.log_cache.is_empty() {
+                    self.log_selected_index =
+                        (self.log_selected_index + 1).min(self.log_cache.len() - 1);
+                }
+            }
         }
     }
 
@@ -147,6 +191,9 @@ impl AppState {
             View::Tree => {
                 self.tree_selected_index = self.tree_selected_index.saturating_sub(1);
             }
+            View::Log => {
+                self.log_selected_index = self.log_selected_index.saturating_sub(1);
+            }
         }
     }
 
@@ -158,6 +205,9 @@ impl AppState {
             }
             View::Tree => {
                 self.tree_selected_index = 0;
+            }
+            View::Log => {
+                self.log_selected_index = 0;
             }
         }
     }
@@ -174,6 +224,11 @@ impl AppState {
                 let max = tree_view::get_flat_tree_len(&self.tree_root, &self.display_filter);
                 if max > 0 {
                     self.tree_selected_index = max - 1;
+                }
+            }
+            View::Log => {
+                if !self.log_cache.is_empty() {
+                    self.log_selected_index = self.log_cache.len() - 1;
                 }
             }
         }
@@ -333,6 +388,52 @@ impl AppState {
     /// Tree View で R キーを押した後に呼び出す
     pub fn refresh_tree_status(&mut self) {
         self.apply_status_to_tree();
+    }
+
+    // --- Log View 用メソッド ---
+
+    /// 選択されているコミットのハッシュを取得する
+    pub fn selected_commit_hash(&self) -> Option<&str> {
+        self.log_cache
+            .get(self.log_selected_index)
+            .and_then(|line| line.hash.as_deref())
+    }
+
+    /// 選択されているコミットの詳細を取得する
+    ///
+    /// # Errors
+    /// - Git コマンドの実行に失敗した場合
+    pub fn get_commit_details(&self) -> Result<String> {
+        if let Some(hash) = self.selected_commit_hash() {
+            self.git.execute(&["show", hash])
+        } else {
+            Ok(String::new())
+        }
+    }
+
+    /// チェックアウトの確認ダイアログを表示する
+    pub fn show_checkout_confirm(&mut self) {
+        if let Some(hash) = self.selected_commit_hash() {
+            self.confirm_dialog = ConfirmDialog::Checkout {
+                commit_hash: hash.to_string(),
+            };
+        }
+    }
+
+    /// チェックアウトを実行する
+    ///
+    /// # Errors
+    /// - Git コマンドの実行に失敗した場合
+    pub fn checkout_commit(&mut self) -> Result<()> {
+        if let ConfirmDialog::Checkout { ref commit_hash } = self.confirm_dialog {
+            let hash = commit_hash.clone();
+            self.git.execute(&["checkout", &hash])?;
+            self.confirm_dialog = ConfirmDialog::None;
+            // チェックアウト後にログとステータスを更新
+            self.refresh_log()?;
+            self.refresh_status()?;
+        }
+        Ok(())
     }
 
     /// Status キャッシュをツリーに適用する

@@ -64,6 +64,7 @@ fn run_app(
         terminal.draw(|f| match state.current_view {
             View::Status => ui::status_view::render(f, state),
             View::Tree => ui::tree_view::render(f, state),
+            View::Log => ui::log_view::render(f, state),
         })?;
 
         // 終了フラグのチェック
@@ -74,21 +75,41 @@ fn run_app(
         // イベント処理
         if let Event::Key(key) = event::read()? {
             // 確認ダイアログ表示中の場合
-            if matches!(state.confirm_dialog, ConfirmDialog::DiscardChanges { .. }) {
-                match key.code {
-                    KeyCode::Char('y') | KeyCode::Char('Y') => {
-                        if let Err(e) = state.discard_changes() {
-                            state.set_status_message(&format!("Error: {}", e));
-                        } else {
-                            state.set_status_message("Changes discarded");
+            match &state.confirm_dialog {
+                ConfirmDialog::DiscardChanges { .. } => {
+                    match key.code {
+                        KeyCode::Char('y') | KeyCode::Char('Y') => {
+                            if let Err(e) = state.discard_changes() {
+                                state.set_status_message(&format!("Error: {}", e));
+                            } else {
+                                state.set_status_message("Changes discarded");
+                            }
                         }
+                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                            state.cancel_confirm();
+                        }
+                        _ => {}
                     }
-                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                        state.cancel_confirm();
-                    }
-                    _ => {}
+                    continue;
                 }
-                continue;
+                ConfirmDialog::Checkout { commit_hash } => {
+                    let hash = commit_hash.clone();
+                    match key.code {
+                        KeyCode::Char('y') | KeyCode::Char('Y') => {
+                            if let Err(e) = state.checkout_commit() {
+                                state.set_status_message(&format!("Error: {}", e));
+                            } else {
+                                state.set_status_message(&format!("Checked out {}", hash));
+                            }
+                        }
+                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                            state.cancel_confirm();
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+                ConfirmDialog::None => {}
             }
 
             // View 切り替え（共通）
@@ -99,6 +120,10 @@ fn run_app(
                 }
                 KeyCode::Char('2') => {
                     state.switch_view(View::Tree);
+                    continue;
+                }
+                KeyCode::Char('3') => {
+                    state.switch_view(View::Log);
                     continue;
                 }
                 KeyCode::Char('q') => {
@@ -116,6 +141,7 @@ fn run_app(
             match state.current_view {
                 View::Status => handle_status_view_keys(terminal, state, key.code, &pager)?,
                 View::Tree => handle_tree_view_keys(state, key.code),
+                View::Log => handle_log_view_keys(terminal, state, key.code, &pager)?,
             }
         }
     }
@@ -249,4 +275,75 @@ fn handle_tree_view_keys(state: &mut AppState, code: KeyCode) {
         }
         _ => {}
     }
+}
+
+/// Log View のキー処理
+fn handle_log_view_keys(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    state: &mut AppState,
+    code: KeyCode,
+    pager: &Pager,
+) -> Result<()> {
+    match code {
+        // ナビゲーション
+        KeyCode::Char('j') | KeyCode::Down => {
+            state.select_next();
+            state.clear_status_message();
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            state.select_previous();
+            state.clear_status_message();
+        }
+        KeyCode::Char('g') => {
+            state.select_first();
+            state.clear_status_message();
+        }
+        KeyCode::Char('G') => {
+            state.select_last();
+            state.clear_status_message();
+        }
+        // コミット詳細表示
+        KeyCode::Enter => {
+            match state.get_commit_details() {
+                Ok(details) => {
+                    if details.is_empty() {
+                        state.set_status_message("No commit selected");
+                    } else {
+                        // ページャ表示のためにターミナルを一時的に復帰
+                        disable_raw_mode()?;
+                        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+
+                        if let Err(e) = pager.display(&details) {
+                            // ページャ失敗時はアプリを継続
+                            enable_raw_mode()?;
+                            execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+                            state.set_status_message(&format!("Pager error: {}", e));
+                        } else {
+                            // ページャ正常終了後にターミナルを再初期化
+                            enable_raw_mode()?;
+                            execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+                            terminal.clear()?;
+                        }
+                    }
+                }
+                Err(e) => {
+                    state.set_status_message(&format!("Error: {}", e));
+                }
+            }
+        }
+        // チェックアウト
+        KeyCode::Char('c') => {
+            state.show_checkout_confirm();
+        }
+        // 手動リフレッシュ
+        KeyCode::Char('R') => {
+            if let Err(e) = state.refresh_log() {
+                state.set_status_message(&format!("Error: {}", e));
+            } else {
+                state.set_status_message("Refreshed");
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
