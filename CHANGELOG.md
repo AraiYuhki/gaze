@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-02-05
+
+### Added
+
+- **差分表示の色分け**
+  - `git diff --color=always` による色付き差分表示
+  - 追加行（緑）、削除行（赤）、ハンク情報（シアン）で色分け
+  - Status View、コミットモード、Log View すべてに適用
+
+### Changed
+
+- デフォルトページャを `less -R` に変更（ANSI カラーコード対応）
+
 ## [0.3.0] - 2026-02-05
 
 ### Added
