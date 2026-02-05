@@ -675,31 +675,29 @@ fn handle_stash_view_keys(
             state.show_stash_drop_confirm();
         }
         // Stash show（内容表示）
-        KeyCode::Enter => {
-            match state.get_stash_show() {
-                Ok(content) => {
-                    if content.is_empty() {
-                        state.set_status_message("No stash selected");
-                    } else {
-                        disable_raw_mode()?;
-                        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+        KeyCode::Enter => match state.get_stash_show() {
+            Ok(content) => {
+                if content.is_empty() {
+                    state.set_status_message("No stash selected");
+                } else {
+                    disable_raw_mode()?;
+                    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
-                        if let Err(e) = pager.display(&content) {
-                            enable_raw_mode()?;
-                            execute!(terminal.backend_mut(), EnterAlternateScreen)?;
-                            state.set_status_message(&format!("Pager error: {}", e));
-                        } else {
-                            enable_raw_mode()?;
-                            execute!(terminal.backend_mut(), EnterAlternateScreen)?;
-                            terminal.clear()?;
-                        }
+                    if let Err(e) = pager.display(&content) {
+                        enable_raw_mode()?;
+                        execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+                        state.set_status_message(&format!("Pager error: {}", e));
+                    } else {
+                        enable_raw_mode()?;
+                        execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+                        terminal.clear()?;
                     }
                 }
-                Err(e) => {
-                    state.set_status_message(&format!("Error: {}", e));
-                }
             }
-        }
+            Err(e) => {
+                state.set_status_message(&format!("Error: {}", e));
+            }
+        },
         // 手動リフレッシュ
         KeyCode::Char('R') => {
             if let Err(e) = state.refresh_stash() {
