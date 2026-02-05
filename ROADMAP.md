@@ -230,10 +230,10 @@ cargo test && cargo clippy -- -D warnings
 ## Phase 2: Tree View
 
 ### 2-1: TreeNode ドメインモデル
-- [ ] `src/domain/tree.rs` を作成
-- [ ] `NodeKind` enum を実装
-- [ ] `TreeNode` 構造体を実装
-- [ ] `children: Option<Vec<TreeNode>>` で遅延ロード対応
+- [x] `src/domain/tree.rs` を作成 <!-- 2026-02-05 -->
+- [x] `NodeKind` enum を実装 <!-- 2026-02-05 -->
+- [x] `TreeNode` 構造体を実装 <!-- 2026-02-05 -->
+- [x] `children: Option<Vec<TreeNode>>` で遅延ロード対応 <!-- 2026-02-05 -->
 
 **検証コマンド**:
 ```bash
@@ -241,10 +241,10 @@ cargo build
 ```
 
 ### 2-2: 遅延ロード実装
-- [ ] `TreeNode::new_dir()` - 子は None で初期化
-- [ ] `TreeNode::load_children()` - 展開時のみ読み込み
-- [ ] `.git` ディレクトリを除外
-- [ ] ディレクトリ優先ソート
+- [x] `TreeNode::new_dir()` - 子は None で初期化 <!-- 2026-02-05 -->
+- [x] `TreeNode::load_children()` - 展開時のみ読み込み <!-- 2026-02-05 -->
+- [x] `.git` ディレクトリを除外 <!-- 2026-02-05 -->
+- [x] ディレクトリ優先ソート <!-- 2026-02-05 -->
 
 **検証コマンド**:
 ```bash
@@ -252,13 +252,13 @@ cargo test tree
 ```
 
 **禁止事項の確認**:
-- [ ] 初期化時に再帰的走査をしていないことを確認
+- [x] 初期化時に再帰的走査をしていないことを確認 <!-- 2026-02-05 -->
 
 ### 2-3: Tree View UI
-- [ ] `src/ui/tree_view.rs` を作成
-- [ ] ツリー表示（インデント付き）
-- [ ] 展開アイコン（▼ = 展開, ▶ = 折りたたみ/未ロード）
-- [ ] Git ステータスインジケータ `[M]`, `[A]`, `[?]`（キャッシュから取得）
+- [x] `src/ui/tree_view.rs` を作成 <!-- 2026-02-05 -->
+- [x] ツリー表示（インデント付き） <!-- 2026-02-05 -->
+- [x] 展開アイコン（▼ = 展開, ▶ = 折りたたみ/未ロード） <!-- 2026-02-05 -->
+- [x] Git ステータスインジケータ `[M]`, `[A]`, `[?]`（キャッシュから取得） <!-- 2026-02-05 -->
 
 **検証コマンド**:
 ```bash
@@ -267,13 +267,13 @@ cargo run
 ```
 
 **禁止事項の確認**:
-- [ ] Tree View 表示時に git status を実行していないこと（キャッシュ参照のみ）
+- [x] Tree View 表示時に git status を実行していないこと（キャッシュ参照のみ） <!-- 2026-02-05 -->
 
 ### 2-4: Tree ナビゲーション
-- [ ] j/k でカーソル移動
-- [ ] Enter/l で展開（load_children + キャッシュから status 適用）
-- [ ] h で折りたたみ
-- [ ] Enter で折りたたんだディレクトリを展開
+- [x] j/k でカーソル移動 <!-- 2026-02-05 -->
+- [x] Enter/l で展開（load_children + キャッシュから status 適用） <!-- 2026-02-05 -->
+- [x] h で折りたたみ <!-- 2026-02-05 -->
+- [x] Enter で折りたたんだディレクトリを展開 <!-- 2026-02-05 -->
 
 **検証コマンド**:
 ```bash
@@ -282,13 +282,13 @@ cargo run
 ```
 
 **禁止事項の確認**:
-- [ ] load_children 内で git コマンドを実行していないこと
+- [x] load_children 内で git コマンドを実行していないこと <!-- 2026-02-05 -->
 
 ### 2-5: 表示フィルタ
-- [ ] `src/filter/mod.rs` を作成
-- [ ] `src/filter/ignore.rs` に `DisplayFilter` を実装
-- [ ] `~/.config/git-tui/display_ignore` から読み込み
-- [ ] H キーでフィルタ表示切替
+- [x] `src/filter/mod.rs` を作成 <!-- 2026-02-05 -->
+- [x] `src/filter/ignore.rs` に `DisplayFilter` を実装 <!-- 2026-02-05 -->
+- [x] `~/.config/git-tui/display_ignore` から読み込み <!-- 2026-02-05 -->
+- [x] H キーでフィルタ表示切替 <!-- 2026-02-05 -->
 
 **検証コマンド**:
 ```bash
@@ -301,9 +301,9 @@ cargo run
 cargo test && cargo clippy -- -D warnings
 ```
 **パフォーマンス確認**:
-- [ ] 大規模リポジトリ（node_modules 等）で起動が高速
-- [ ] **Phase 2 完了** <!-- 完了日時: -->
-- [ ] **Phase 2 レビュー完了** - `docs/review/phase-2.md` 作成済み
+- [x] 大規模リポジトリ（node_modules 等）で起動が高速 <!-- 2026-02-05 -->
+- [x] **Phase 2 完了** <!-- 完了日時: 2026-02-05 -->
+- [x] **Phase 2 レビュー完了** - `docs/review/phase-2.md` 作成済み <!-- 2026-02-05 -->
 
 ---
 

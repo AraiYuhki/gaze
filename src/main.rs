@@ -17,7 +17,7 @@ mod filter;
 mod pager;
 mod ui;
 
-use app::{AppState, ConfirmDialog};
+use app::{AppState, ConfirmDialog, View};
 use pager::Pager;
 
 fn main() -> Result<()> {
@@ -60,9 +60,10 @@ fn run_app(
     let pager = Pager::new();
 
     loop {
-        // 描画
-        terminal.draw(|f| {
-            ui::status_view::render(f, state);
+        // 描画（View に応じて切り替え）
+        terminal.draw(|f| match state.current_view {
+            View::Status => ui::status_view::render(f, state),
+            View::Tree => ui::tree_view::render(f, state),
         })?;
 
         // 終了フラグのチェック
@@ -90,84 +91,162 @@ fn run_app(
                 continue;
             }
 
-            // 通常のキー処理
+            // View 切り替え（共通）
             match key.code {
-                // 終了
+                KeyCode::Char('1') => {
+                    state.switch_view(View::Status);
+                    continue;
+                }
+                KeyCode::Char('2') => {
+                    state.switch_view(View::Tree);
+                    continue;
+                }
                 KeyCode::Char('q') => {
                     state.should_quit = true;
+                    continue;
                 }
-                // ナビゲーション
-                KeyCode::Char('j') | KeyCode::Down => {
-                    state.select_next();
-                    state.clear_status_message();
-                }
-                KeyCode::Char('k') | KeyCode::Up => {
-                    state.select_previous();
-                    state.clear_status_message();
-                }
-                KeyCode::Char('g') => {
-                    state.select_first();
-                    state.clear_status_message();
-                }
-                KeyCode::Char('G') => {
-                    state.select_last();
-                    state.clear_status_message();
-                }
-                // ステージング
-                KeyCode::Char('s') => {
-                    if let Err(e) = state.toggle_stage() {
-                        state.set_status_message(&format!("Error: {}", e));
-                    } else {
-                        state.set_status_message("Staged/Unstaged");
-                    }
-                }
-                // 差分表示
-                KeyCode::Char('d') => {
-                    match state.get_diff() {
-                        Ok(diff) => {
-                            if diff.is_empty() {
-                                state.set_status_message("No diff available");
-                            } else {
-                                // ページャ表示のためにターミナルを一時的に復帰
-                                disable_raw_mode()?;
-                                execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-
-                                if let Err(e) = pager.display(&diff) {
-                                    // ページャ失敗時はアプリを継続
-                                    enable_raw_mode()?;
-                                    execute!(terminal.backend_mut(), EnterAlternateScreen)?;
-                                    state.set_status_message(&format!("Pager error: {}", e));
-                                } else {
-                                    // ページャ正常終了後にターミナルを再初期化
-                                    enable_raw_mode()?;
-                                    execute!(terminal.backend_mut(), EnterAlternateScreen)?;
-                                    terminal.clear()?;
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            state.set_status_message(&format!("Error: {}", e));
-                        }
-                    }
-                }
-                // 変更破棄
-                KeyCode::Char('r') => {
-                    state.show_discard_confirm();
-                }
-                // 手動リフレッシュ
-                KeyCode::Char('R') => {
-                    if let Err(e) = state.refresh_status() {
-                        state.set_status_message(&format!("Error: {}", e));
-                    } else {
-                        state.set_status_message("Refreshed");
-                    }
-                }
-                // Ctrl+C でも終了
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     state.should_quit = true;
+                    continue;
                 }
                 _ => {}
             }
+
+            // View 固有のキー処理
+            match state.current_view {
+                View::Status => handle_status_view_keys(terminal, state, key.code, &pager)?,
+                View::Tree => handle_tree_view_keys(state, key.code),
+            }
         }
+    }
+}
+
+/// Status View のキー処理
+fn handle_status_view_keys(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    state: &mut AppState,
+    code: KeyCode,
+    pager: &Pager,
+) -> Result<()> {
+    match code {
+        // ナビゲーション
+        KeyCode::Char('j') | KeyCode::Down => {
+            state.select_next();
+            state.clear_status_message();
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            state.select_previous();
+            state.clear_status_message();
+        }
+        KeyCode::Char('g') => {
+            state.select_first();
+            state.clear_status_message();
+        }
+        KeyCode::Char('G') => {
+            state.select_last();
+            state.clear_status_message();
+        }
+        // ステージング
+        KeyCode::Char('s') => {
+            if let Err(e) = state.toggle_stage() {
+                state.set_status_message(&format!("Error: {}", e));
+            } else {
+                state.set_status_message("Staged/Unstaged");
+            }
+        }
+        // 差分表示
+        KeyCode::Char('d') => {
+            match state.get_diff() {
+                Ok(diff) => {
+                    if diff.is_empty() {
+                        state.set_status_message("No diff available");
+                    } else {
+                        // ページャ表示のためにターミナルを一時的に復帰
+                        disable_raw_mode()?;
+                        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+
+                        if let Err(e) = pager.display(&diff) {
+                            // ページャ失敗時はアプリを継続
+                            enable_raw_mode()?;
+                            execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+                            state.set_status_message(&format!("Pager error: {}", e));
+                        } else {
+                            // ページャ正常終了後にターミナルを再初期化
+                            enable_raw_mode()?;
+                            execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+                            terminal.clear()?;
+                        }
+                    }
+                }
+                Err(e) => {
+                    state.set_status_message(&format!("Error: {}", e));
+                }
+            }
+        }
+        // 変更破棄
+        KeyCode::Char('r') => {
+            state.show_discard_confirm();
+        }
+        // 手動リフレッシュ
+        KeyCode::Char('R') => {
+            if let Err(e) = state.refresh_status() {
+                state.set_status_message(&format!("Error: {}", e));
+            } else {
+                state.set_status_message("Refreshed");
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Tree View のキー処理
+fn handle_tree_view_keys(state: &mut AppState, code: KeyCode) {
+    match code {
+        // ナビゲーション
+        KeyCode::Char('j') | KeyCode::Down => {
+            state.select_next();
+            state.clear_status_message();
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            state.select_previous();
+            state.clear_status_message();
+        }
+        KeyCode::Char('g') => {
+            state.select_first();
+            state.clear_status_message();
+        }
+        KeyCode::Char('G') => {
+            state.select_last();
+            state.clear_status_message();
+        }
+        // 展開/折りたたみ
+        KeyCode::Enter | KeyCode::Char('l') => {
+            state.expand_tree_node();
+        }
+        KeyCode::Char('h') => {
+            state.collapse_tree_node();
+        }
+        // フィルタ切替
+        KeyCode::Char('H') => {
+            state.toggle_display_filter();
+            let status = if state.display_filter.is_enabled() {
+                "Filter ON"
+            } else {
+                "Filter OFF"
+            };
+            state.set_status_message(status);
+        }
+        // 手動リフレッシュ
+        KeyCode::Char('R') => {
+            if let Err(e) = state.refresh_status() {
+                state.set_status_message(&format!("Error: {}", e));
+            } else {
+                // Tree View ではリフレッシュ後にステータスを再適用
+                state.refresh_tree_status();
+                state.set_status_message("Refreshed");
+            }
+        }
+        _ => {}
     }
 }
