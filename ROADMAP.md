@@ -614,17 +614,17 @@ cargo test && cargo clippy -- -D warnings
 ## Phase 9: 特定ファイルのログ表示
 
 ### 9-1: ファイルログ表示
-- [ ] Tree View でファイル選択時に `l` キーでファイルのログを表示
-- [ ] `git log --oneline --follow -- <file>` を使用
-- [ ] Log View と同様のUIで表示
-- [ ] `Enter` キーでコミット詳細を表示
+- [x] Tree View でファイル選択時に `l` キーでファイルのログを表示 <!-- 2026-02-05 -->
+- [x] `git log --oneline --follow -- <file>` を使用 <!-- 2026-02-05 -->
+- [x] Log View と同様のUIで表示 <!-- 2026-02-05 -->
+- [x] `Enter` キーでコミット詳細を表示 <!-- 2026-02-05 -->
 
 ### Phase 9 完了判定
 ```bash
 cargo test && cargo clippy -- -D warnings
 ```
-- [ ] **Phase 9 完了**
-- [ ] **Phase 9 レビュー完了** - `docs/review/phase-9.md` 作成
+- [x] **Phase 9 完了** <!-- 2026-02-05 -->
+- [x] **Phase 9 レビュー完了** - `docs/review/phase-9.md` 作成 <!-- 2026-02-05 -->
 
 ---
 

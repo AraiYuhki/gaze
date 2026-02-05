@@ -134,6 +134,12 @@ pub struct AppState {
     pub branch_search_query: String,
     /// Branch View 入力モード
     pub branch_input_mode: BranchInputMode,
+    /// ファイルログ表示中のファイルパス（None の場合は通常の Log View）
+    pub file_log_path: Option<std::path::PathBuf>,
+    /// ファイルログのキャッシュ
+    pub file_log_cache: Vec<GraphLine>,
+    /// ファイルログでの選択インデックス
+    pub file_log_selected_index: usize,
 }
 
 impl AppState {
@@ -189,6 +195,9 @@ impl AppState {
             branch_selected_index: 0,
             branch_search_query: String::new(),
             branch_input_mode: BranchInputMode::None,
+            file_log_path: None,
+            file_log_cache: Vec::new(),
+            file_log_selected_index: 0,
         };
         // 起動時に1回だけ status を取得
         state.refresh_status()?;
@@ -226,7 +235,8 @@ impl AppState {
                     self.apply_status_to_tree();
                 }
                 View::Log => {
-                    // Log View 切り替え時にログを取得
+                    // Log View 切り替え時にファイルログモードをクリアしてログを取得
+                    self.clear_file_log();
                     let _ = self.refresh_log();
                 }
                 View::Status => {
@@ -264,6 +274,39 @@ impl AppState {
         Ok(())
     }
 
+    /// 特定ファイルの Git log を取得してキャッシュを更新する
+    ///
+    /// # Arguments
+    /// * `path` - ログを取得するファイルのパス（リポジトリルートからの相対パス）
+    pub fn refresh_file_log(&mut self, path: &Path) -> Result<()> {
+        let path_str = path.to_string_lossy();
+        let output = self.git.execute(&[
+            "log",
+            "--oneline",
+            "--follow",
+            "-n",
+            &LOG_LIMIT.to_string(),
+            "--",
+            &path_str,
+        ])?;
+        self.file_log_cache = parse_log(&output);
+        self.file_log_selected_index = 0;
+        self.file_log_path = Some(path.to_path_buf());
+        Ok(())
+    }
+
+    /// ファイルログモードをクリアして通常の Log View に戻る
+    pub fn clear_file_log(&mut self) {
+        self.file_log_path = None;
+        self.file_log_cache.clear();
+        self.file_log_selected_index = 0;
+    }
+
+    /// ファイルログモードかどうかを返す
+    pub fn is_file_log_mode(&self) -> bool {
+        self.file_log_path.is_some()
+    }
+
     /// 選択を1つ下に移動
     pub fn select_next(&mut self) {
         match self.current_view {
@@ -280,7 +323,12 @@ impl AppState {
                 }
             }
             View::Log => {
-                if !self.log_cache.is_empty() {
+                if self.is_file_log_mode() {
+                    if !self.file_log_cache.is_empty() {
+                        self.file_log_selected_index =
+                            (self.file_log_selected_index + 1).min(self.file_log_cache.len() - 1);
+                    }
+                } else if !self.log_cache.is_empty() {
                     self.log_selected_index =
                         (self.log_selected_index + 1).min(self.log_cache.len() - 1);
                 }
@@ -311,7 +359,11 @@ impl AppState {
                 self.tree_selected_index = self.tree_selected_index.saturating_sub(1);
             }
             View::Log => {
-                self.log_selected_index = self.log_selected_index.saturating_sub(1);
+                if self.is_file_log_mode() {
+                    self.file_log_selected_index = self.file_log_selected_index.saturating_sub(1);
+                } else {
+                    self.log_selected_index = self.log_selected_index.saturating_sub(1);
+                }
             }
             View::Stash => {
                 self.stash_selected_index = self.stash_selected_index.saturating_sub(1);
@@ -332,7 +384,11 @@ impl AppState {
                 self.tree_selected_index = 0;
             }
             View::Log => {
-                self.log_selected_index = 0;
+                if self.is_file_log_mode() {
+                    self.file_log_selected_index = 0;
+                } else {
+                    self.log_selected_index = 0;
+                }
             }
             View::Stash => {
                 self.stash_selected_index = 0;
@@ -358,7 +414,11 @@ impl AppState {
                 }
             }
             View::Log => {
-                if !self.log_cache.is_empty() {
+                if self.is_file_log_mode() {
+                    if !self.file_log_cache.is_empty() {
+                        self.file_log_selected_index = self.file_log_cache.len() - 1;
+                    }
+                } else if !self.log_cache.is_empty() {
                     self.log_selected_index = self.log_cache.len() - 1;
                 }
             }
@@ -544,13 +604,61 @@ impl AppState {
         self.apply_status_to_tree();
     }
 
+    /// 選択されている Tree ノードがファイルかどうかを返す
+    pub fn is_selected_tree_node_file(&self) -> bool {
+        let index = self.tree_selected_index;
+        let filter = &self.display_filter;
+
+        let flat = tree_view::flatten_tree(&self.tree_root, filter, 0);
+        flat.get(index)
+            .is_some_and(|(node, _)| node.kind == NodeKind::File)
+    }
+
+    /// 選択されている Tree ノードのパスを取得する
+    pub fn get_selected_tree_node_path(&self) -> Option<std::path::PathBuf> {
+        let index = self.tree_selected_index;
+        let filter = &self.display_filter;
+
+        let flat = tree_view::flatten_tree(&self.tree_root, filter, 0);
+        flat.get(index).map(|(node, _)| node.path.clone())
+    }
+
+    /// Tree View で選択されているファイルのログを開く
+    ///
+    /// # Errors
+    /// - ファイルが選択されていない場合
+    /// - Git コマンドの実行に失敗した場合
+    pub fn open_file_log(&mut self) -> Result<()> {
+        // ファイルでない場合は何もしない
+        if !self.is_selected_tree_node_file() {
+            return Ok(());
+        }
+
+        // パスを取得
+        let path = self.get_selected_tree_node_path();
+        if let Some(path) = path {
+            // リポジトリルートからの相対パスを計算
+            let repo_root = self.git.repo_root().to_path_buf();
+            let relative_path = path.strip_prefix(&repo_root).unwrap_or(&path);
+            self.refresh_file_log(relative_path)?;
+            self.current_view = View::Log;
+        }
+        Ok(())
+    }
+
     // --- Log View 用メソッド ---
 
     /// 選択されているコミットのハッシュを取得する
     pub fn selected_commit_hash(&self) -> Option<&str> {
-        self.log_cache
-            .get(self.log_selected_index)
-            .and_then(|line| line.hash.as_deref())
+        if self.is_file_log_mode() {
+            self.file_log_cache
+                .get(self.file_log_selected_index)
+                .and_then(|line| line.hash.as_deref())
+        } else {
+            self.log_cache
+                .get(self.log_selected_index)
+                .and_then(|line| line.hash.as_deref())
+        }
     }
 
     /// 選択されているコミットの詳細を取得する（色付き）
@@ -559,7 +667,14 @@ impl AppState {
     /// - Git コマンドの実行に失敗した場合
     pub fn get_commit_details(&self) -> Result<String> {
         if let Some(hash) = self.selected_commit_hash() {
-            self.git.execute(&["show", "--color=always", hash])
+            // ファイルログモードの場合はそのファイルの変更のみ表示
+            if let Some(ref path) = self.file_log_path {
+                let path_str = path.to_string_lossy();
+                self.git
+                    .execute(&["show", "--color=always", hash, "--", &path_str])
+            } else {
+                self.git.execute(&["show", "--color=always", hash])
+            }
         } else {
             Ok(String::new())
         }

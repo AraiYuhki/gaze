@@ -25,28 +25,45 @@ pub fn render(f: &mut Frame, state: &AppState) {
 
 /// ログ一覧を描画する
 fn render_log(f: &mut Frame, state: &AppState, area: Rect) {
+    // ファイルログモードかどうかで使用するキャッシュとインデックスを切り替え
+    let (log_cache, selected_index, title) = if let Some(ref path) = state.file_log_path {
+        let filename = path
+            .file_name()
+            .map_or("unknown".to_string(), |n| n.to_string_lossy().to_string());
+        (
+            &state.file_log_cache,
+            state.file_log_selected_index,
+            format!(
+                " File Log: {} [{} commits] ",
+                filename,
+                state.file_log_cache.len()
+            ),
+        )
+    } else {
+        (
+            &state.log_cache,
+            state.log_selected_index,
+            format!(" Log (3) [{} commits] ", state.log_cache.len()),
+        )
+    };
+
     // スクロール位置を計算
     let visible_height = area.height.saturating_sub(2) as usize; // ボーダー分を引く
-    let offset = calculate_scroll_offset(state.log_selected_index, visible_height);
+    let offset = calculate_scroll_offset(selected_index, visible_height);
 
     // ListState を使わずに手動でオフセットを適用
-    let items_to_show: Vec<ListItem> = state
-        .log_cache
+    let items_to_show: Vec<ListItem> = log_cache
         .iter()
         .enumerate()
         .skip(offset)
         .take(visible_height)
         .map(|(index, line)| {
-            let is_selected = index == state.log_selected_index;
+            let is_selected = index == selected_index;
             render_log_item(line, is_selected)
         })
         .collect();
 
-    let list = List::new(items_to_show).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" Log (3) [{} commits] ", state.log_cache.len())),
-    );
+    let list = List::new(items_to_show).block(Block::default().borders(Borders::ALL).title(title));
 
     f.render_widget(list, area);
 }
@@ -135,10 +152,13 @@ fn render_log_item(line: &GraphLine, is_selected: bool) -> ListItem<'static> {
 
 /// ステータスバーを描画する
 fn render_status_bar(f: &mut Frame, state: &AppState, area: Rect) {
-    let message = state
-        .status_message
-        .as_deref()
-        .unwrap_or("j/k:move Enter:show c:checkout 1:status 2:tree q:quit");
+    let default_message = if state.is_file_log_mode() {
+        "j/k:move Enter:show Esc:back q:quit"
+    } else {
+        "j/k:move Enter:show c:checkout 1:status 2:tree q:quit"
+    };
+
+    let message = state.status_message.as_deref().unwrap_or(default_message);
 
     let status_bar = Paragraph::new(message).style(Style::default().fg(Color::Cyan));
 

@@ -427,9 +427,21 @@ fn handle_tree_view_keys(state: &mut AppState, code: KeyCode) {
             state.select_last();
             state.clear_status_message();
         }
-        // 展開/折りたたみ
-        KeyCode::Enter | KeyCode::Char('l') => {
+        // 展開（Enter）
+        KeyCode::Enter => {
             state.expand_tree_node();
+        }
+        // 展開 or ファイルログ（l）
+        KeyCode::Char('l') => {
+            if state.is_selected_tree_node_file() {
+                // ファイルの場合はファイルログを表示
+                if let Err(e) = state.open_file_log() {
+                    state.set_status_message(&format!("Error: {}", e));
+                }
+            } else {
+                // ディレクトリの場合は展開
+                state.expand_tree_node();
+            }
         }
         KeyCode::Char('h') => {
             state.collapse_tree_node();
@@ -538,16 +550,35 @@ fn handle_log_view_keys(
                 }
             }
         }
-        // チェックアウト
+        // チェックアウト（ファイルログモードでは無効）
         KeyCode::Char('c') => {
-            state.show_checkout_confirm();
+            if !state.is_file_log_mode() {
+                state.show_checkout_confirm();
+            }
         }
         // 手動リフレッシュ
         KeyCode::Char('R') => {
-            if let Err(e) = state.refresh_log() {
+            let result = if state.is_file_log_mode() {
+                // ファイルログモードの場合は現在のパスでリフレッシュ
+                if let Some(path) = state.file_log_path.clone() {
+                    state.refresh_file_log(&path)
+                } else {
+                    Ok(())
+                }
+            } else {
+                state.refresh_log()
+            };
+            if let Err(e) = result {
                 state.set_status_message(&format!("Error: {}", e));
             } else {
                 state.set_status_message("Refreshed");
+            }
+        }
+        // ファイルログモードを終了して Tree View に戻る
+        KeyCode::Esc => {
+            if state.is_file_log_mode() {
+                state.clear_file_log();
+                state.switch_view(View::Tree);
             }
         }
         _ => {}
