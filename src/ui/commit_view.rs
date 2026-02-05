@@ -151,9 +151,7 @@ fn render_message_input(f: &mut Frame, state: &AppState, area: Rect) {
                         // カーソル位置
                         spans.push(Span::styled(
                             c.to_string(),
-                            Style::default()
-                                .bg(Color::White)
-                                .fg(Color::Black),
+                            Style::default().bg(Color::White).fg(Color::Black),
                         ));
                     } else {
                         spans.push(Span::raw(c.to_string()));
@@ -164,9 +162,7 @@ fn render_message_input(f: &mut Frame, state: &AppState, area: Rect) {
                 if state.commit_cursor_x >= chars.len() {
                     spans.push(Span::styled(
                         " ",
-                        Style::default()
-                            .bg(Color::White)
-                            .fg(Color::Black),
+                        Style::default().bg(Color::White).fg(Color::Black),
                     ));
                 }
 

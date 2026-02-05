@@ -741,10 +741,7 @@ impl AppState {
         };
         // カーソルを末尾に配置
         self.commit_cursor_y = self.commit_message.len().saturating_sub(1);
-        self.commit_cursor_x = self
-            .commit_message
-            .last()
-            .map_or(0, |s| s.chars().count());
+        self.commit_cursor_x = self.commit_message.last().map_or(0, |s| s.chars().count());
         self.commit_file_index = 0;
         self.commit_focus_files = false;
         Ok(())
@@ -836,8 +833,7 @@ impl AppState {
         let rest = line[byte_pos..].to_string();
         line.truncate(byte_pos);
         self.commit_cursor_y += 1;
-        self.commit_message
-            .insert(self.commit_cursor_y, rest);
+        self.commit_message.insert(self.commit_cursor_y, rest);
         self.commit_cursor_x = 0;
     }
 
