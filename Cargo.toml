@@ -9,7 +9,11 @@ crossterm = "0.28"
 anyhow = "1.0"
 thiserror = "2.0"
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 toml = "0.8"
 directories = "6.0"
 glob = "0.3"
 unicode-width = "0.2"
+
+# 自己更新機能用（この用途のみネットワーク許可）
+reqwest = { version = "0.12", features = ["blocking", "json"] }
