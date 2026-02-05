@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **自己更新機能**
+  - `--check-update`: 最新バージョンの確認
+  - `--update`: 最新バージョンへの更新
+  - `--version`, `-V`: バージョン表示
+  - `--help`, `-h`: ヘルプ表示
+
 ## [0.2.1] - 2026-02-05
 
 ### Fixed

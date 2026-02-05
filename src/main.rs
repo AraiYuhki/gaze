@@ -1,3 +1,4 @@
+use std::env;
 use std::io;
 
 use anyhow::Result;
@@ -16,12 +17,39 @@ mod error;
 mod filter;
 mod pager;
 mod ui;
+mod update;
 
 use app::{AppState, CommitMode, ConfirmDialog, View};
 use config::Settings;
 use pager::Pager;
 
 fn main() -> Result<()> {
+    // CLI 引数の処理
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 1 {
+        match args[1].as_str() {
+            "--version" | "-V" => {
+                update::print_version();
+                return Ok(());
+            }
+            "--check-update" => {
+                return update::check_update();
+            }
+            "--update" => {
+                return update::update();
+            }
+            "--help" | "-h" => {
+                print_help();
+                return Ok(());
+            }
+            arg => {
+                eprintln!("Unknown option: {}", arg);
+                print_help();
+                std::process::exit(1);
+            }
+        }
+    }
+
     // パニック時にターミナルを復帰させる
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic| {
@@ -40,7 +68,7 @@ fn main() -> Result<()> {
     };
 
     // Git リポジトリの検出
-    let current_dir = std::env::current_dir()?;
+    let current_dir = env::current_dir()?;
     let mut state = match AppState::new(&current_dir) {
         Ok(state) => state,
         Err(e) => {
@@ -572,4 +600,21 @@ fn handle_commit_mode_keys(
     }
 
     Ok(())
+}
+
+/// ヘルプメッセージを表示
+fn print_help() {
+    println!(
+        r#"gaze - A lightweight Git TUI tool
+
+Usage: gaze [OPTIONS]
+
+Options:
+    -h, --help          Show this help message
+    -V, --version       Show version information
+    --check-update      Check for updates
+    --update            Update to the latest version
+
+Run 'gaze' without options to start the TUI in the current directory."#
+    );
 }
