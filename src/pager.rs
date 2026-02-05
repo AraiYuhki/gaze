@@ -5,14 +5,10 @@ use std::process::{Command, Stdio};
 use crate::error::{AppError, Result};
 
 /// 外部ページャを使用してテキストを表示する
-// Phase 1 以降で使用されるため dead_code を許可
-#[allow(dead_code)]
 pub struct Pager {
     command: String,
 }
 
-// Phase 1 以降で使用されるため dead_code を許可
-#[allow(dead_code)]
 impl Pager {
     /// 環境変数からページャコマンドを決定して Pager を作成する
     ///

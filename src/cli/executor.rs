@@ -4,14 +4,10 @@ use std::process::Command;
 use crate::error::{AppError, Result};
 
 /// Git CLI コマンドを実行するための構造体
-// Phase 1 以降で使用されるため dead_code を許可
-#[allow(dead_code)]
 pub struct GitCli {
     repo_root: PathBuf,
 }
 
-// Phase 1 以降で使用されるため dead_code を許可
-#[allow(dead_code)]
 impl GitCli {
     /// 指定されたパスから Git リポジトリを検出して GitCli を作成する
     ///
@@ -54,6 +50,8 @@ impl GitCli {
     }
 
     /// リポジトリのルートパスを返す
+    // TODO(Phase 2): Tree View でリポジトリルートから展開する際に使用予定
+    #[allow(dead_code)]
     pub fn repo_root(&self) -> &Path {
         &self.repo_root
     }

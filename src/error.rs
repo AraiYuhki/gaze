@@ -1,8 +1,6 @@
 use thiserror::Error;
 
 /// アプリケーション全体で使用するエラー型
-// Phase 1 以降で使用されるため dead_code を許可
-#[allow(dead_code)]
 #[derive(Error, Debug)]
 pub enum AppError {
     #[error("Git command failed: {0}")]
@@ -17,6 +15,8 @@ pub enum AppError {
     #[error("Pager failed: {0}")]
     Pager(String),
 
+    // TODO(Phase 4): 設定ファイル読み込みで使用予定
+    #[allow(dead_code)]
     #[error("Config error: {0}")]
     Config(String),
 
@@ -24,6 +24,4 @@ pub enum AppError {
     Io(#[from] std::io::Error),
 }
 
-// Phase 1 以降で使用されるため dead_code を許可
-#[allow(dead_code)]
 pub type Result<T> = std::result::Result<T, AppError>;
