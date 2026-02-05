@@ -127,7 +127,7 @@ fn render_log_item(line: &GraphLine, is_selected: bool) -> ListItem<'static> {
     let item = ListItem::new(Line::from(spans));
 
     if is_selected {
-        item.style(Style::default().bg(Color::DarkGray))
+        item.style(Style::default().bg(Color::Rgb(60, 60, 80)))
     } else {
         item
     }

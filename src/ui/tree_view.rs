@@ -164,7 +164,7 @@ fn render_tree_item(
     let item = ListItem::new(line);
 
     if is_selected {
-        item.style(Style::default().bg(Color::DarkGray))
+        item.style(Style::default().bg(Color::Rgb(60, 60, 80)))
     } else {
         item
     }

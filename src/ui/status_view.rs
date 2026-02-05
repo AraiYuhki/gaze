@@ -65,7 +65,7 @@ fn render_file_list(f: &mut Frame, state: &AppState, area: Rect) {
 
             let item = ListItem::new(line);
             if is_selected {
-                item.style(Style::default().bg(Color::DarkGray))
+                item.style(Style::default().bg(Color::Rgb(60, 60, 80)))
             } else {
                 item
             }
