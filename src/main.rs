@@ -17,7 +17,7 @@ mod filter;
 mod pager;
 mod ui;
 
-use app::{AppState, ConfirmDialog, View};
+use app::{AppState, CommitMode, ConfirmDialog, View};
 use config::Settings;
 use pager::Pager;
 
@@ -73,10 +73,15 @@ fn run_app(
     loop {
         // 描画（View に応じて切り替え）
         terminal.draw(|f| {
-            match state.current_view {
-                View::Status => ui::status_view::render(f, state),
-                View::Tree => ui::tree_view::render(f, state),
-                View::Log => ui::log_view::render(f, state),
+            // コミットモード中はコミット画面を表示
+            if state.commit_mode != CommitMode::None {
+                ui::commit_view::render(f, state);
+            } else {
+                match state.current_view {
+                    View::Status => ui::status_view::render(f, state),
+                    View::Tree => ui::tree_view::render(f, state),
+                    View::Log => ui::log_view::render(f, state),
+                }
             }
             // ヘルプ画面をオーバーレイ表示
             if state.show_help {
@@ -132,7 +137,28 @@ fn run_app(
                     }
                     continue;
                 }
+                ConfirmDialog::Amend => {
+                    match key.code {
+                        KeyCode::Char('y') | KeyCode::Char('Y') => {
+                            state.cancel_confirm();
+                            if let Err(e) = state.start_amend_mode() {
+                                state.set_status_message(&format!("Error: {}", e));
+                            }
+                        }
+                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                            state.cancel_confirm();
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
                 ConfirmDialog::None => {}
+            }
+
+            // コミットモード中のキー処理
+            if state.commit_mode != CommitMode::None {
+                handle_commit_mode_keys(terminal, state, &key, &pager)?;
+                continue;
             }
 
             // View 切り替え（共通）
@@ -257,6 +283,15 @@ fn handle_status_view_keys(
             } else {
                 state.set_status_message("Refreshed");
             }
+        }
+        // コミット
+        KeyCode::Char('c') => {
+            state.start_commit_mode();
+        }
+        // Amend（確認ダイアログを表示）
+        KeyCode::Char('C') => {
+            state.confirm_dialog = ConfirmDialog::Amend;
+            state.set_status_message("Amend last commit? (y/n)");
         }
         _ => {}
     }
@@ -435,5 +470,101 @@ fn handle_log_view_keys(
         }
         _ => {}
     }
+    Ok(())
+}
+
+/// コミットモードのキー処理
+fn handle_commit_mode_keys(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    state: &mut AppState,
+    key: &event::KeyEvent,
+    pager: &Pager,
+) -> Result<()> {
+    // Ctrl+Enter でコミット実行
+    if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::CONTROL) {
+        if let Err(e) = state.execute_commit() {
+            state.set_status_message(&format!("Error: {}", e));
+        }
+        return Ok(());
+    }
+
+    // Esc でキャンセル
+    if key.code == KeyCode::Esc {
+        state.cancel_commit_mode();
+        state.set_status_message("Commit cancelled");
+        return Ok(());
+    }
+
+    // Tab でフォーカス切り替え
+    if key.code == KeyCode::Tab {
+        state.commit_toggle_focus();
+        return Ok(());
+    }
+
+    // ファイル一覧にフォーカスしている場合
+    if state.commit_focus_files {
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                state.commit_file_next();
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                state.commit_file_prev();
+            }
+            KeyCode::Char('d') => {
+                // staged diff を表示
+                match state.get_commit_staged_diff() {
+                    Ok(diff) => {
+                        if diff.is_empty() {
+                            state.set_status_message("No diff available");
+                        } else {
+                            disable_raw_mode()?;
+                            execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+
+                            if let Err(e) = pager.display(&diff) {
+                                enable_raw_mode()?;
+                                execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+                                state.set_status_message(&format!("Pager error: {}", e));
+                            } else {
+                                enable_raw_mode()?;
+                                execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+                                terminal.clear()?;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        state.set_status_message(&format!("Error: {}", e));
+                    }
+                }
+            }
+            _ => {}
+        }
+    } else {
+        // メッセージ入力にフォーカスしている場合
+        match key.code {
+            KeyCode::Enter => {
+                state.commit_new_line();
+            }
+            KeyCode::Backspace => {
+                state.commit_delete_char();
+            }
+            KeyCode::Left => {
+                state.commit_cursor_left();
+            }
+            KeyCode::Right => {
+                state.commit_cursor_right();
+            }
+            KeyCode::Up => {
+                state.commit_cursor_up();
+            }
+            KeyCode::Down => {
+                state.commit_cursor_down();
+            }
+            KeyCode::Char(c) => {
+                state.commit_insert_char(c);
+            }
+            _ => {}
+        }
+    }
+
     Ok(())
 }
