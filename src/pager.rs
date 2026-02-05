@@ -49,11 +49,20 @@ impl Pager {
     /// - ページャの起動に失敗した場合
     /// - ページャへの書き込みに失敗した場合
     pub fn display(&self, content: &str) -> Result<()> {
-        let mut child = Command::new("sh")
-            .args(["-c", &self.command])
-            .stdin(Stdio::piped())
-            .spawn()
-            .map_err(|e| AppError::Pager(format!("Failed to spawn pager: {}", e)))?;
+        let mut child = if cfg!(target_os = "windows") {
+            // Windows: cmd.exe /c を使用
+            Command::new("cmd")
+                .args(["/c", &self.command])
+                .stdin(Stdio::piped())
+                .spawn()
+        } else {
+            // Unix: sh -c を使用
+            Command::new("sh")
+                .args(["-c", &self.command])
+                .stdin(Stdio::piped())
+                .spawn()
+        }
+        .map_err(|e| AppError::Pager(format!("Failed to spawn pager: {}", e)))?;
 
         if let Some(mut stdin) = child.stdin.take() {
             stdin
