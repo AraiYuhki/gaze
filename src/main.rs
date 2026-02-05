@@ -480,8 +480,13 @@ fn handle_commit_mode_keys(
     key: &event::KeyEvent,
     pager: &Pager,
 ) -> Result<()> {
-    // Ctrl+Enter でコミット実行
-    if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::CONTROL) {
+    // Ctrl+Enter または Ctrl+D でコミット実行
+    // 注: 多くのターミナルでは Ctrl+Enter が正しく認識されないため Ctrl+D を推奨
+    let is_commit_key = (key.code == KeyCode::Enter
+        && key.modifiers.contains(KeyModifiers::CONTROL))
+        || (key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL));
+
+    if is_commit_key {
         if let Err(e) = state.execute_commit() {
             state.set_status_message(&format!("Error: {}", e));
         }
