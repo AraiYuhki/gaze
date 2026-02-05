@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-02-05
+
+### Added
+
+- **Branch View（Phase 8）**
+  - `5` キーで Branch View に切り替え
+  - ローカル/リモートブランチの一覧表示
+  - 現在のブランチを `*` マークでハイライト
+  - リモートブランチを `[remote]` タグ付きで表示
+  - `/` キーでインクリメンタル検索（フィルタリング）
+  - `Enter` キーでブランチをチェックアウト
+  - リモートブランチのトラッキングチェックアウト対応
+  - 未コミット変更がある場合の警告ダイアログ
+
 ## [0.5.0] - 2026-02-05
 
 ### Added

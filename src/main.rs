@@ -19,7 +19,7 @@ mod pager;
 mod ui;
 mod update;
 
-use app::{AppState, CommitMode, ConfirmDialog, StashInputMode, View};
+use app::{AppState, BranchInputMode, CommitMode, ConfirmDialog, StashInputMode, View};
 use config::Settings;
 use pager::Pager;
 
@@ -110,6 +110,7 @@ fn run_app(
                     View::Tree => ui::tree_view::render(f, state),
                     View::Log => ui::log_view::render(f, state),
                     View::Stash => ui::stash_view::render(f, state),
+                    View::Branch => ui::branch_view::render(f, state),
                 }
             }
             // ヘルプ画面をオーバーレイ表示
@@ -195,12 +196,32 @@ fn run_app(
                     }
                     continue;
                 }
+                ConfirmDialog::CheckoutBranch { .. } => {
+                    match key.code {
+                        KeyCode::Char('y') | KeyCode::Char('Y') => {
+                            if let Err(e) = state.checkout_branch() {
+                                state.set_status_message(&format!("Error: {}", e));
+                            }
+                        }
+                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                            state.cancel_confirm();
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
                 ConfirmDialog::None => {}
             }
 
             // Stash 入力モード中のキー処理
             if state.stash_input_mode != StashInputMode::None {
                 handle_stash_input_keys(state, &key)?;
+                continue;
+            }
+
+            // Branch 検索モード中のキー処理
+            if state.branch_input_mode != BranchInputMode::None {
+                handle_branch_input_keys(state, &key)?;
                 continue;
             }
 
@@ -228,13 +249,18 @@ fn run_app(
                     state.switch_view(View::Stash);
                     continue;
                 }
+                KeyCode::Char('5') => {
+                    state.switch_view(View::Branch);
+                    continue;
+                }
                 KeyCode::Tab => {
-                    // Tab で順次切り替え: Status -> Tree -> Log -> Stash -> Status
+                    // Tab で順次切り替え: Status -> Tree -> Log -> Stash -> Branch -> Status
                     let next_view = match state.current_view {
                         View::Status => View::Tree,
                         View::Tree => View::Log,
                         View::Log => View::Stash,
-                        View::Stash => View::Status,
+                        View::Stash => View::Branch,
+                        View::Branch => View::Status,
                     };
                     state.switch_view(next_view);
                     continue;
@@ -260,6 +286,7 @@ fn run_app(
                 View::Tree => handle_tree_view_keys(state, key.code),
                 View::Log => handle_log_view_keys(terminal, state, key.code, &pager)?,
                 View::Stash => handle_stash_view_keys(terminal, state, key.code, &pager)?,
+                View::Branch => handle_branch_view_keys(state, key.code)?,
             }
         }
     }
@@ -675,31 +702,29 @@ fn handle_stash_view_keys(
             state.show_stash_drop_confirm();
         }
         // Stash show（内容表示）
-        KeyCode::Enter => {
-            match state.get_stash_show() {
-                Ok(content) => {
-                    if content.is_empty() {
-                        state.set_status_message("No stash selected");
-                    } else {
-                        disable_raw_mode()?;
-                        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+        KeyCode::Enter => match state.get_stash_show() {
+            Ok(content) => {
+                if content.is_empty() {
+                    state.set_status_message("No stash selected");
+                } else {
+                    disable_raw_mode()?;
+                    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
 
-                        if let Err(e) = pager.display(&content) {
-                            enable_raw_mode()?;
-                            execute!(terminal.backend_mut(), EnterAlternateScreen)?;
-                            state.set_status_message(&format!("Pager error: {}", e));
-                        } else {
-                            enable_raw_mode()?;
-                            execute!(terminal.backend_mut(), EnterAlternateScreen)?;
-                            terminal.clear()?;
-                        }
+                    if let Err(e) = pager.display(&content) {
+                        enable_raw_mode()?;
+                        execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+                        state.set_status_message(&format!("Pager error: {}", e));
+                    } else {
+                        enable_raw_mode()?;
+                        execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+                        terminal.clear()?;
                     }
                 }
-                Err(e) => {
-                    state.set_status_message(&format!("Error: {}", e));
-                }
             }
-        }
+            Err(e) => {
+                state.set_status_message(&format!("Error: {}", e));
+            }
+        },
         // 手動リフレッシュ
         KeyCode::Char('R') => {
             if let Err(e) = state.refresh_stash() {
@@ -730,6 +755,74 @@ fn handle_stash_input_keys(state: &mut AppState, key: &event::KeyEvent) -> Resul
         }
         KeyCode::Char(c) => {
             state.stash_message_push(c);
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Branch View のキー処理
+fn handle_branch_view_keys(state: &mut AppState, code: KeyCode) -> Result<()> {
+    match code {
+        // ナビゲーション
+        KeyCode::Char('j') | KeyCode::Down => {
+            state.select_next();
+            state.clear_status_message();
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            state.select_previous();
+            state.clear_status_message();
+        }
+        KeyCode::Char('g') => {
+            state.select_first();
+            state.clear_status_message();
+        }
+        KeyCode::Char('G') => {
+            state.select_last();
+            state.clear_status_message();
+        }
+        // ブランチ切り替え
+        KeyCode::Enter => {
+            state.show_branch_checkout_confirm();
+        }
+        // 検索モード開始
+        KeyCode::Char('/') => {
+            state.start_branch_search();
+        }
+        // 検索クリア
+        KeyCode::Esc => {
+            if !state.branch_search_query.is_empty() {
+                state.clear_branch_search();
+            }
+        }
+        // 手動リフレッシュ
+        KeyCode::Char('R') => {
+            if let Err(e) = state.refresh_branches() {
+                state.set_status_message(&format!("Error: {}", e));
+            } else {
+                state.set_status_message("Refreshed");
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Branch 入力モードのキー処理
+fn handle_branch_input_keys(state: &mut AppState, key: &event::KeyEvent) -> Result<()> {
+    match key.code {
+        KeyCode::Enter => {
+            // 検索を確定
+            state.confirm_branch_search();
+        }
+        KeyCode::Esc => {
+            state.cancel_branch_search();
+        }
+        KeyCode::Backspace => {
+            state.branch_search_pop();
+        }
+        KeyCode::Char(c) => {
+            state.branch_search_push(c);
         }
         _ => {}
     }

@@ -1,7 +1,9 @@
 use std::path::Path;
 
-use crate::cli::{parse_log, parse_stash_list, parse_status, GitCli};
-use crate::domain::{FileStatus, GraphLine, NodeKind, StashEntry, StatusKind, TreeNode};
+use crate::cli::{parse_branch_list, parse_log, parse_stash_list, parse_status, GitCli};
+use crate::domain::{
+    BranchEntry, FileStatus, GraphLine, NodeKind, StashEntry, StatusKind, TreeNode,
+};
 use crate::error::Result;
 use crate::filter::DisplayFilter;
 use crate::ui::tree_view;
@@ -13,6 +15,7 @@ pub enum View {
     Tree,
     Log,
     Stash,
+    Branch,
 }
 
 /// 確認ダイアログの状態
@@ -28,6 +31,8 @@ pub enum ConfirmDialog {
     Amend,
     /// Stash 削除の確認
     DropStash { stash_index: usize },
+    /// ブランチ切り替えの確認
+    CheckoutBranch { branch_name: String },
 }
 
 /// コミットモードの種類
@@ -48,6 +53,15 @@ pub enum StashInputMode {
     None,
     /// Stash push 用のメッセージ入力
     Push,
+}
+
+/// Branch View 入力モード
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BranchInputMode {
+    /// 入力モードではない
+    None,
+    /// 検索入力中
+    Search,
 }
 
 /// Log View で取得するコミット数
@@ -112,6 +126,14 @@ pub struct AppState {
     pub stash_input_mode: StashInputMode,
     /// Stash メッセージ
     pub stash_message: String,
+    /// Branch 一覧のキャッシュ
+    pub branch_cache: Vec<BranchEntry>,
+    /// Branch View での選択インデックス
+    pub branch_selected_index: usize,
+    /// Branch 検索クエリ
+    pub branch_search_query: String,
+    /// Branch View 入力モード
+    pub branch_input_mode: BranchInputMode,
 }
 
 impl AppState {
@@ -163,6 +185,10 @@ impl AppState {
             stash_selected_index: 0,
             stash_input_mode: StashInputMode::None,
             stash_message: String::new(),
+            branch_cache: Vec::new(),
+            branch_selected_index: 0,
+            branch_search_query: String::new(),
+            branch_input_mode: BranchInputMode::None,
         };
         // 起動時に1回だけ status を取得
         state.refresh_status()?;
@@ -209,6 +235,12 @@ impl AppState {
                 View::Stash => {
                     // Stash View 切り替え時に stash 一覧を取得
                     let _ = self.refresh_stash();
+                }
+                View::Branch => {
+                    // Branch View 切り替え時に branch 一覧と status を取得
+                    // status はチェックアウト時の uncommitted changes 検出に必要
+                    let _ = self.refresh_status();
+                    let _ = self.refresh_branches();
                 }
             }
         }
@@ -259,6 +291,13 @@ impl AppState {
                         (self.stash_selected_index + 1).min(self.stash_cache.len() - 1);
                 }
             }
+            View::Branch => {
+                let filtered = self.filtered_branches();
+                if !filtered.is_empty() {
+                    self.branch_selected_index =
+                        (self.branch_selected_index + 1).min(filtered.len() - 1);
+                }
+            }
         }
     }
 
@@ -277,6 +316,9 @@ impl AppState {
             View::Stash => {
                 self.stash_selected_index = self.stash_selected_index.saturating_sub(1);
             }
+            View::Branch => {
+                self.branch_selected_index = self.branch_selected_index.saturating_sub(1);
+            }
         }
     }
 
@@ -294,6 +336,9 @@ impl AppState {
             }
             View::Stash => {
                 self.stash_selected_index = 0;
+            }
+            View::Branch => {
+                self.branch_selected_index = 0;
             }
         }
     }
@@ -320,6 +365,12 @@ impl AppState {
             View::Stash => {
                 if !self.stash_cache.is_empty() {
                     self.stash_selected_index = self.stash_cache.len() - 1;
+                }
+            }
+            View::Branch => {
+                let filtered = self.filtered_branches();
+                if !filtered.is_empty() {
+                    self.branch_selected_index = filtered.len() - 1;
                 }
             }
         }
@@ -1091,6 +1142,148 @@ impl AppState {
         } else {
             Ok(String::new())
         }
+    }
+
+    // --- Branch 関連メソッド ---
+
+    /// Branch 一覧を再取得してキャッシュを更新する
+    pub fn refresh_branches(&mut self) -> Result<()> {
+        let output = self.git.execute(&["branch", "-a"])?;
+        self.branch_cache = parse_branch_list(&output);
+        // 選択インデックスが範囲外になった場合は調整
+        let filtered_len = self.filtered_branches().len();
+        if filtered_len > 0 && self.branch_selected_index >= filtered_len {
+            self.branch_selected_index = filtered_len - 1;
+        }
+        Ok(())
+    }
+
+    /// フィルタリングされた Branch 一覧を取得
+    pub fn filtered_branches(&self) -> Vec<&BranchEntry> {
+        if self.branch_search_query.is_empty() {
+            self.branch_cache.iter().collect()
+        } else {
+            let query_lower = self.branch_search_query.to_lowercase();
+            self.branch_cache
+                .iter()
+                .filter(|b| b.name.to_lowercase().contains(&query_lower))
+                .collect()
+        }
+    }
+
+    /// 現在選択されている Branch エントリを取得
+    pub fn selected_branch(&self) -> Option<&BranchEntry> {
+        self.filtered_branches()
+            .get(self.branch_selected_index)
+            .copied()
+    }
+
+    /// Branch 検索モードを開始
+    pub fn start_branch_search(&mut self) {
+        self.branch_input_mode = BranchInputMode::Search;
+        self.branch_search_query.clear();
+        self.branch_selected_index = 0;
+    }
+
+    /// Branch 検索をキャンセル
+    pub fn cancel_branch_search(&mut self) {
+        self.branch_input_mode = BranchInputMode::None;
+        self.branch_search_query.clear();
+        self.branch_selected_index = 0;
+    }
+
+    /// Branch 検索を確定
+    pub fn confirm_branch_search(&mut self) {
+        self.branch_input_mode = BranchInputMode::None;
+        // 検索クエリは保持したまま、選択状態を維持
+    }
+
+    /// Branch 検索クエリに文字を追加
+    pub fn branch_search_push(&mut self, c: char) {
+        self.branch_search_query.push(c);
+        // 検索結果が変わる可能性があるので選択インデックスをリセット
+        self.branch_selected_index = 0;
+    }
+
+    /// Branch 検索クエリから文字を削除
+    pub fn branch_search_pop(&mut self) {
+        self.branch_search_query.pop();
+        // 検索結果が変わる可能性があるので選択インデックスをリセット
+        self.branch_selected_index = 0;
+    }
+
+    /// Branch 検索をクリア
+    pub fn clear_branch_search(&mut self) {
+        self.branch_search_query.clear();
+        self.branch_selected_index = 0;
+    }
+
+    /// ブランチチェックアウトの確認ダイアログを表示
+    pub fn show_branch_checkout_confirm(&mut self) {
+        if let Some(branch) = self.selected_branch() {
+            // 現在のブランチの場合は何もしない
+            if branch.is_current {
+                self.set_status_message("Already on this branch");
+                return;
+            }
+            self.confirm_dialog = ConfirmDialog::CheckoutBranch {
+                branch_name: branch.name.clone(),
+            };
+        }
+    }
+
+    /// ブランチをチェックアウトする
+    ///
+    /// # Errors
+    /// - Git コマンドの実行に失敗した場合
+    pub fn checkout_branch(&mut self) -> Result<()> {
+        if let ConfirmDialog::CheckoutBranch { ref branch_name } = self.confirm_dialog {
+            let name = branch_name.clone();
+
+            // 未コミットの変更があるかチェック
+            if !self.status_cache.is_empty() {
+                let has_changes = self.status_cache.iter().any(|f| {
+                    f.index != StatusKind::Unmodified
+                        || f.worktree != StatusKind::Unmodified
+                        || f.index == StatusKind::Untracked
+                });
+                if has_changes {
+                    self.confirm_dialog = ConfirmDialog::None;
+                    self.set_status_message(
+                        "Cannot switch: uncommitted changes exist. Stash or commit first.",
+                    );
+                    return Ok(());
+                }
+            }
+
+            // リモートブランチの場合はトラッキングブランチとしてチェックアウト
+            let selected = self.selected_branch();
+            let is_remote = selected.is_some_and(|b| b.is_remote);
+
+            let result = if is_remote {
+                // remote/branch-name から branch-name を抽出
+                // 最初の `/` 以降をローカルブランチ名とする（origin/, upstream/ 等に対応）
+                let local_name = name.find('/').map_or(&name[..], |pos| &name[pos + 1..]);
+                self.git
+                    .execute(&["checkout", "-t", &name, "-b", local_name])
+            } else {
+                self.git.execute(&["checkout", &name])
+            };
+
+            self.confirm_dialog = ConfirmDialog::None;
+
+            match result {
+                Ok(_) => {
+                    self.set_status_message(&format!("Switched to branch '{}'", name));
+                    self.refresh_branches()?;
+                    self.refresh_status()?;
+                }
+                Err(e) => {
+                    self.set_status_message(&format!("Failed to switch branch: {}", e));
+                }
+            }
+        }
+        Ok(())
     }
 }
 

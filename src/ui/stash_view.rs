@@ -98,9 +98,10 @@ fn create_stash_list_item(entry: &StashEntry, is_selected: bool) -> ListItem<'st
 
 /// ステータスバーを描画する
 fn render_status_bar(f: &mut Frame, state: &AppState, area: Rect) {
-    let message = state.status_message.as_deref().unwrap_or(
-        "j/k:move s:stash p:pop a:apply d:drop Enter:show R:refresh q:quit",
-    );
+    let message = state
+        .status_message
+        .as_deref()
+        .unwrap_or("j/k:move s:stash p:pop a:apply d:drop Enter:show R:refresh q:quit");
 
     let status_bar = Paragraph::new(message).style(Style::default().fg(Color::Cyan));
 
