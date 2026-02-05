@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Git ステータスの色分け表示
   - ディレクトリの展開/折りたたみ
   - 表示フィルタ機能
+  - Vim ライクなインクリメンタル検索（折りたたみ内も検索可能）
 
 - **Log View**: コミット履歴表示
   - グラフ形式のコミット履歴
