@@ -5,6 +5,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
     Frame,
 };
+use unicode_width::UnicodeWidthChar;
 
 use crate::app::{AppState, CommitMode};
 use crate::domain::StatusKind;
@@ -175,6 +176,23 @@ fn render_message_input(f: &mut Frame, state: &AppState, area: Rect) {
 
     let paragraph = Paragraph::new(lines).block(block);
     f.render_widget(paragraph, area);
+
+    // メッセージ入力にフォーカスしている場合、ターミナルカーソルを設定
+    // これによりIMEのプリエディット（変換中文字列）が正しい位置に表示される
+    if !state.commit_focus_files {
+        // カーソル位置を計算（ボーダー分 +1）
+        let cursor_x = area.x
+            + 1
+            + state.commit_message[state.commit_cursor_y]
+                .chars()
+                .take(state.commit_cursor_x)
+                .map(|c| UnicodeWidthChar::width(c).unwrap_or(1) as u16)
+                .sum::<u16>();
+        let cursor_y = area.y + 1 + state.commit_cursor_y as u16;
+
+        // ターミナルカーソルを設定
+        f.set_cursor_position((cursor_x, cursor_y));
+    }
 }
 
 /// ステータスバーを描画
