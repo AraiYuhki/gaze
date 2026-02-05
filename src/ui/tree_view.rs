@@ -50,7 +50,7 @@ fn render_tree(f: &mut Frame, state: &AppState, area: Rect) {
         .enumerate()
         .map(|(index, (node, depth))| {
             let is_selected = index == state.tree_selected_index;
-            let is_match = state.tree_search_matches.contains(&index);
+            let is_match = state.tree_search_matches.contains(&node.path);
             render_tree_item(
                 node,
                 *depth,

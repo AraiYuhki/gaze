@@ -63,8 +63,8 @@ pub struct AppState {
     pub tree_search_mode: bool,
     /// Tree View 検索文字列
     pub tree_search_query: String,
-    /// Tree View 検索マッチインデックスリスト
-    pub tree_search_matches: Vec<usize>,
+    /// Tree View 検索マッチパスリスト
+    pub tree_search_matches: Vec<std::path::PathBuf>,
     /// Tree View 現在のマッチインデックス
     pub tree_search_current_match: usize,
 }
@@ -472,9 +472,7 @@ impl AppState {
     /// 検索を確定し、最初のマッチへジャンプする
     pub fn confirm_tree_search(&mut self) {
         self.tree_search_mode = false;
-        if !self.tree_search_matches.is_empty() {
-            self.tree_selected_index = self.tree_search_matches[self.tree_search_current_match];
-        }
+        self.jump_to_current_match();
     }
 
     /// 検索文字列に文字を追加する
@@ -494,7 +492,7 @@ impl AppState {
         if !self.tree_search_matches.is_empty() {
             self.tree_search_current_match =
                 (self.tree_search_current_match + 1) % self.tree_search_matches.len();
-            self.tree_selected_index = self.tree_search_matches[self.tree_search_current_match];
+            self.jump_to_current_match();
         }
     }
 
@@ -506,11 +504,64 @@ impl AppState {
             } else {
                 self.tree_search_current_match -= 1;
             }
-            self.tree_selected_index = self.tree_search_matches[self.tree_search_current_match];
+            self.jump_to_current_match();
         }
     }
 
-    /// 検索マッチリストを更新する
+    /// 現在のマッチへジャンプする（親を展開してからインデックスを設定）
+    fn jump_to_current_match(&mut self) {
+        if self.tree_search_matches.is_empty() {
+            return;
+        }
+
+        let target_path = self.tree_search_matches[self.tree_search_current_match].clone();
+
+        // 親ディレクトリを展開する
+        self.expand_parents_for_path(&target_path);
+
+        // 展開後にインデックスを取得
+        let flat = tree_view::flatten_tree(&self.tree_root, &self.display_filter, 0);
+        for (index, (node, _)) in flat.iter().enumerate() {
+            if node.path == target_path {
+                self.tree_selected_index = index;
+                break;
+            }
+        }
+    }
+
+    /// 指定されたパスの親ディレクトリを全て展開する
+    fn expand_parents_for_path(&mut self, target_path: &std::path::Path) {
+        // ルートからターゲットまでのパスを収集
+        let mut ancestors: Vec<std::path::PathBuf> = Vec::new();
+        let mut current = target_path.parent();
+        while let Some(parent) = current {
+            // ルートパス自体は除外し、ルートパスの子孫のみを追加
+            if parent != self.tree_root.path && parent.starts_with(&self.tree_root.path) {
+                ancestors.push(parent.to_path_buf());
+            }
+            current = parent.parent();
+        }
+
+        // ルートに近い順に展開
+        ancestors.reverse();
+
+        // status_cache を先にクローン（borrow checker 対策）
+        let cache = self.status_cache.clone();
+
+        for ancestor_path in ancestors {
+            if let Some(node) = find_node_by_path_mut(&mut self.tree_root, &ancestor_path) {
+                if node.kind == NodeKind::Directory && !node.expanded {
+                    if node.children.is_none() {
+                        let _ = node.load_children();
+                        node.apply_status_cache(&cache);
+                    }
+                    node.expanded = true;
+                }
+            }
+        }
+    }
+
+    /// 検索マッチリストを更新する（全ノードを検索、折りたたみ状態も含む）
     fn update_tree_search_matches(&mut self) {
         self.tree_search_matches.clear();
         self.tree_search_current_match = 0;
@@ -520,19 +571,60 @@ impl AppState {
         }
 
         let query_lower = self.tree_search_query.to_lowercase();
-        let flat = tree_view::flatten_tree(&self.tree_root, &self.display_filter, 0);
 
-        for (index, (node, _depth)) in flat.iter().enumerate() {
-            let name_lower = node.name.to_lowercase();
-            if name_lower.contains(&query_lower) {
-                self.tree_search_matches.push(index);
-            }
-        }
+        // 全ノードを再帰的に検索（折りたたまれたノードも含む）
+        // まず未ロードのディレクトリもロードする必要があるため、
+        // ツリーを走査しながらマッチを収集
+        let cache = self.status_cache.clone();
+        self.search_tree_recursive(&query_lower, &cache);
 
         // 最初のマッチへジャンプ（検索モード中）
         if !self.tree_search_matches.is_empty() {
-            self.tree_selected_index = self.tree_search_matches[0];
+            self.jump_to_current_match();
         }
+    }
+
+    /// ツリーを再帰的に検索してマッチを収集する
+    fn search_tree_recursive(&mut self, query: &str, cache: &[FileStatus]) {
+        // 検索のためにツリー全体を走査
+        fn collect_matches(
+            node: &mut TreeNode,
+            query: &str,
+            filter: &DisplayFilter,
+            cache: &[FileStatus],
+            matches: &mut Vec<std::path::PathBuf>,
+        ) {
+            // 未ロードの場合はロード
+            if node.kind == NodeKind::Directory && node.children.is_none() {
+                let _ = node.load_children();
+                node.apply_status_cache(cache);
+            }
+
+            if let Some(children) = &mut node.children {
+                for child in children {
+                    // フィルタで非表示のものはスキップ
+                    if filter.should_hide(&child.path) {
+                        continue;
+                    }
+
+                    // 名前がクエリにマッチするか確認
+                    let name_lower = child.name.to_lowercase();
+                    if name_lower.contains(query) {
+                        matches.push(child.path.clone());
+                    }
+
+                    // ディレクトリの場合は再帰
+                    if child.kind == NodeKind::Directory {
+                        collect_matches(child, query, filter, cache, matches);
+                    }
+                }
+            }
+        }
+
+        let filter = self.display_filter.clone();
+        let mut matches = Vec::new();
+        collect_matches(&mut self.tree_root, query, &filter, cache, &mut matches);
+        self.tree_search_matches = matches;
     }
 
     /// Status キャッシュをツリーに適用する

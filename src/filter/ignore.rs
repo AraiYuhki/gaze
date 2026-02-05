@@ -7,6 +7,7 @@ use glob::Pattern;
 ///
 /// `~/.config/git-tui/display_ignore` から読み込んだパターンに
 /// マッチするファイル/ディレクトリを非表示にする
+#[derive(Clone)]
 pub struct DisplayFilter {
     patterns: Vec<Pattern>,
     enabled: bool,
