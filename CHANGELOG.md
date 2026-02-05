@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-02-05
+
 ### Added
 
 - **コミット機能**
@@ -15,6 +17,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - ステージされたファイル一覧の表示
   - 選択ファイルの staged diff 表示（`d` キー）
   - Amend 機能（`C` キー、確認ダイアログ付き）
+
+- **Tree View 検索機能**
+  - Vim ライクなインクリメンタル検索（`/` キー）
+  - 折りたたまれたディレクトリ内も検索対象
+  - マッチ時に親ディレクトリを自動展開
+
+- **CI/CD**
+  - GitHub Actions でビルドとリリースを自動化
+  - Linux / macOS (Intel, Apple Silicon) / Windows 向けバイナリを提供
+
+### Fixed
+
+- Unicode ファイル名でのハイライト表示の不具合を修正
+
+### Changed
+
+- 全ビューの選択行の背景色を統一し、視認性を向上
 
 ## [0.1.0] - 2026-02-05
 
