@@ -565,27 +565,27 @@ cargo test && cargo clippy -- -D warnings
 ## Phase 7: Stash 対応
 
 ### 7-1: Stash 一覧表示
-- [ ] 新しい View として Stash View を追加（キー `4`）
-- [ ] `git stash list` の出力をパース・表示
-- [ ] j/k でカーソル移動
+- [x] 新しい View として Stash View を追加（キー `4`） <!-- 2026-02-05 -->
+- [x] `git stash list` の出力をパース・表示 <!-- 2026-02-05 -->
+- [x] j/k でカーソル移動 <!-- 2026-02-05 -->
 
 ### 7-2: Stash 操作
-- [ ] `s` キーで現在の変更を stash（`git stash push`）
-- [ ] `p` キーで選択した stash を適用（`git stash pop`）
-- [ ] `a` キーで選択した stash を適用（`git stash apply`、stash は残す）
-- [ ] `d` キーで選択した stash を削除（確認ダイアログ付き）
-- [ ] `Enter` キーで stash の内容を表示（`git stash show -p`）
+- [x] `s` キーで現在の変更を stash（`git stash push`） <!-- 2026-02-05 -->
+- [x] `p` キーで選択した stash を適用（`git stash pop`） <!-- 2026-02-05 -->
+- [x] `a` キーで選択した stash を適用（`git stash apply`、stash は残す） <!-- 2026-02-05 -->
+- [x] `d` キーで選択した stash を削除（確認ダイアログ付き） <!-- 2026-02-05 -->
+- [x] `Enter` キーで stash の内容を表示（`git stash show -p`） <!-- 2026-02-05 -->
 
 ### 7-3: Stash メッセージ入力
-- [ ] stash 作成時にメッセージ入力ダイアログを表示
-- [ ] 空の場合はデフォルトメッセージを使用
+- [x] stash 作成時にメッセージ入力ダイアログを表示 <!-- 2026-02-05 -->
+- [x] 空の場合はデフォルトメッセージを使用 <!-- 2026-02-05 -->
 
 ### Phase 7 完了判定
 ```bash
 cargo test && cargo clippy -- -D warnings
 ```
-- [ ] **Phase 7 完了**
-- [ ] **Phase 7 レビュー完了** - `docs/review/phase-7.md` 作成
+- [x] **Phase 7 完了** <!-- 2026-02-05 -->
+- [x] **Phase 7 レビュー完了** - `docs/review/phase-7.md` 作成 <!-- 2026-02-05 -->
 
 ---
 
