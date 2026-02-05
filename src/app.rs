@@ -307,7 +307,7 @@ impl AppState {
         Ok(())
     }
 
-    /// 選択されているファイルの差分を取得する
+    /// 選択されているファイルの差分を取得する（色付き）
     ///
     /// # Errors
     /// - Git コマンドの実行に失敗した場合
@@ -316,9 +316,11 @@ impl AppState {
             let path_str = file.path.to_string_lossy();
             // ステージされている場合は --cached を付ける
             if file.index != StatusKind::Unmodified && file.index != StatusKind::Untracked {
-                self.git.execute(&["diff", "--cached", path_str.as_ref()])
+                self.git
+                    .execute(&["diff", "--cached", "--color=always", path_str.as_ref()])
             } else {
-                self.git.execute(&["diff", path_str.as_ref()])
+                self.git
+                    .execute(&["diff", "--color=always", path_str.as_ref()])
             }
         } else {
             Ok(String::new())
@@ -455,13 +457,13 @@ impl AppState {
             .and_then(|line| line.hash.as_deref())
     }
 
-    /// 選択されているコミットの詳細を取得する
+    /// 選択されているコミットの詳細を取得する（色付き）
     ///
     /// # Errors
     /// - Git コマンドの実行に失敗した場合
     pub fn get_commit_details(&self) -> Result<String> {
         if let Some(hash) = self.selected_commit_hash() {
-            self.git.execute(&["show", hash])
+            self.git.execute(&["show", "--color=always", hash])
         } else {
             Ok(String::new())
         }
@@ -906,12 +908,13 @@ impl AppState {
         self.commit_focus_files = !self.commit_focus_files;
     }
 
-    /// コミット画面で選択されたファイルの staged diff を取得
+    /// コミット画面で選択されたファイルの staged diff を取得（色付き）
     pub fn get_commit_staged_diff(&self) -> Result<String> {
         let staged = self.get_staged_files();
         if let Some(file) = staged.get(self.commit_file_index) {
             let path_str = file.path.to_string_lossy();
-            self.git.execute(&["diff", "--staged", &path_str])
+            self.git
+                .execute(&["diff", "--staged", "--color=always", &path_str])
         } else {
             Ok(String::new())
         }
