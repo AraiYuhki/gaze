@@ -562,16 +562,129 @@ cargo test && cargo clippy -- -D warnings
 
 ---
 
+## Phase 7: Stash 対応
+
+### 7-1: Stash 一覧表示
+- [ ] 新しい View として Stash View を追加（キー `4`）
+- [ ] `git stash list` の出力をパース・表示
+- [ ] j/k でカーソル移動
+
+### 7-2: Stash 操作
+- [ ] `s` キーで現在の変更を stash（`git stash push`）
+- [ ] `p` キーで選択した stash を適用（`git stash pop`）
+- [ ] `a` キーで選択した stash を適用（`git stash apply`、stash は残す）
+- [ ] `d` キーで選択した stash を削除（確認ダイアログ付き）
+- [ ] `Enter` キーで stash の内容を表示（`git stash show -p`）
+
+### 7-3: Stash メッセージ入力
+- [ ] stash 作成時にメッセージ入力ダイアログを表示
+- [ ] 空の場合はデフォルトメッセージを使用
+
+### Phase 7 完了判定
+```bash
+cargo test && cargo clippy -- -D warnings
+```
+- [ ] **Phase 7 完了**
+- [ ] **Phase 7 レビュー完了** - `docs/review/phase-7.md` 作成
+
+---
+
+## Phase 8: ブランチ切り替え
+
+### 8-1: ブランチ一覧表示
+- [ ] 新しい View として Branch View を追加（キー `5`）
+- [ ] `git branch -a` の出力をパース・表示
+- [ ] 現在のブランチをハイライト表示
+- [ ] j/k でカーソル移動
+- [ ] `/` キーで検索（フィルタリング）
+
+### 8-2: ブランチ切り替え
+- [ ] `Enter` キーで選択したブランチに切り替え（`git checkout`）
+- [ ] 未コミットの変更がある場合は警告ダイアログを表示
+
+### Phase 8 完了判定
+```bash
+cargo test && cargo clippy -- -D warnings
+```
+- [ ] **Phase 8 完了**
+- [ ] **Phase 8 レビュー完了** - `docs/review/phase-8.md` 作成
+
+---
+
+## Phase 9: 特定ファイルのログ表示
+
+### 9-1: ファイルログ表示
+- [ ] Tree View でファイル選択時に `l` キーでファイルのログを表示
+- [ ] `git log --oneline --follow -- <file>` を使用
+- [ ] Log View と同様のUIで表示
+- [ ] `Enter` キーでコミット詳細を表示
+
+### Phase 9 完了判定
+```bash
+cargo test && cargo clippy -- -D warnings
+```
+- [ ] **Phase 9 完了**
+- [ ] **Phase 9 レビュー完了** - `docs/review/phase-9.md` 作成
+
+---
+
+## Phase 10: リモート操作
+
+### 10-1: Push
+- [ ] `P` キー（Shift+P）で push（`git push`）
+- [ ] push 前に確認ダイアログを表示
+- [ ] upstream が設定されていない場合はエラー表示
+
+### 10-2: Pull
+- [ ] `F` キーで pull（`git pull`）
+- [ ] 未コミットの変更がある場合は警告
+- [ ] コンフリクト発生時はエラー表示（自動解決は行わない）
+
+### Phase 10 完了判定
+```bash
+cargo test && cargo clippy -- -D warnings
+```
+- [ ] **Phase 10 完了**
+- [ ] **Phase 10 レビュー完了** - `docs/review/phase-10.md` 作成
+
+---
+
+## Phase 11: 部分ステージング（hunk 単位）
+
+### 11-1: Hunk 表示
+- [ ] Status View で `h` キーで hunk モードに入る
+- [ ] 差分を hunk 単位で表示
+- [ ] j/k で hunk 間を移動
+
+### 11-2: Hunk 操作
+- [ ] `s` キーで選択した hunk をステージ
+- [ ] `r` キーで選択した hunk の変更を破棄（確認ダイアログ付き）
+- [ ] `q` または `Esc` で hunk モードを終了
+
+### 実装上の注意
+- `git add -p` は対話的コマンドのため使用不可
+- `git apply --cached` を使用して hunk を適用
+- diff 出力をパースして hunk を抽出する必要あり
+
+### Phase 11 完了判定
+```bash
+cargo test && cargo clippy -- -D warnings
+```
+- [ ] **Phase 11 完了**
+- [ ] **Phase 11 レビュー完了** - `docs/review/phase-11.md` 作成
+
+---
+
 ## 延期した機能（将来）
 
 以下は現時点のスコープ外。実装しないこと。
 
 - Log の動的読み込み（スクロール時に追加取得）
-- 特定ファイルのログ表示
 - 非同期化（tokio 導入）
-- Stash 対応
-- ブランチ操作
 - カスタムキーバインド
+- ブランチ作成・削除
+- マージ操作
+- リベース操作
 
 ---
 

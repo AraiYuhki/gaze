@@ -985,6 +985,161 @@ fn default_pager() -> String {
 
 ---
 
+### Phase 7: Stash 対応
+
+#### 7-1: Stash View の追加
+
+**実装方針**:
+- 新しい View として `StashView` を追加（キー `4` で切り替え）
+- `git stash list` の出力をパースして表示
+
+**パーサー実装**:
+```rust
+// git stash list の出力例:
+// stash@{0}: WIP on main: abc1234 commit message
+// stash@{1}: On feature: def5678 another message
+
+#[derive(Debug, Clone)]
+pub struct StashEntry {
+    pub index: usize,           // stash@{N} の N
+    pub branch: String,         // ブランチ名
+    pub commit_hash: String,    // 短縮ハッシュ
+    pub message: String,        // メッセージ
+}
+```
+
+#### 7-2: Stash 操作
+
+**使用する Git コマンド**:
+- 一覧取得: `git stash list`
+- 新規作成: `git stash push -m "<message>"`
+- 適用（削除あり）: `git stash pop stash@{N}`
+- 適用（削除なし）: `git stash apply stash@{N}`
+- 削除: `git stash drop stash@{N}`
+- 内容表示: `git stash show -p --color=always stash@{N}`
+
+**重要**: stash 操作後は `refresh_status()` を呼び出す
+
+---
+
+### Phase 8: ブランチ切り替え
+
+#### 8-1: Branch View の追加
+
+**実装方針**:
+- 新しい View として `BranchView` を追加（キー `5` で切り替え）
+- `git branch -a` の出力をパースして表示
+- 現在のブランチには `*` マークを表示
+
+**パーサー実装**:
+```rust
+// git branch -a の出力例:
+// * main
+//   feature/foo
+//   remotes/origin/main
+//   remotes/origin/feature/bar
+
+#[derive(Debug, Clone)]
+pub struct BranchEntry {
+    pub name: String,
+    pub is_current: bool,
+    pub is_remote: bool,
+}
+```
+
+#### 8-2: ブランチ切り替え
+
+**使用する Git コマンド**:
+- 切り替え: `git checkout <branch>`
+
+**注意点**:
+- 未コミットの変更がある場合は警告を表示
+- リモートブランチの場合は `git checkout -t origin/<branch>` を使用
+
+---
+
+### Phase 9: 特定ファイルのログ表示
+
+**実装方針**:
+- Tree View でファイル選択中に `l` キーでファイルログモードに入る
+- `git log --oneline --follow -- <file>` を使用
+- `--follow` によりリネーム追跡を有効化
+- Log View と同様の UI で表示
+
+---
+
+### Phase 10: リモート操作
+
+#### 10-1: Push / Pull
+
+**使用する Git コマンド**:
+- Push: `git push`
+- Pull: `git pull`
+
+**注意点**:
+- Push 前に確認ダイアログを表示
+- Pull 前に未コミットの変更がないか確認
+- コンフリクト発生時はエラーメッセージを表示し、ユーザーに手動解決を促す
+- 自動マージ・自動解決は行わない
+
+---
+
+### Phase 11: 部分ステージング（hunk 単位）
+
+**実装方針**:
+- `git add -p` は対話的コマンドのため使用不可
+- diff 出力をパースして hunk を抽出
+- `git apply --cached` を使用して選択した hunk をステージ
+
+**Hunk パーサー**:
+```rust
+#[derive(Debug, Clone)]
+pub struct Hunk {
+    pub header: String,         // @@ -1,3 +1,4 @@ のような行
+    pub old_start: usize,
+    pub old_count: usize,
+    pub new_start: usize,
+    pub new_count: usize,
+    pub lines: Vec<HunkLine>,   // 差分の各行
+}
+
+#[derive(Debug, Clone)]
+pub enum HunkLine {
+    Context(String),    // 変更なしの行（スペース始まり）
+    Added(String),      // 追加行（+ 始まり）
+    Removed(String),    // 削除行（- 始まり）
+}
+```
+
+**Hunk 適用方法**:
+1. 選択した hunk をパッチファイル形式で生成
+2. `git apply --cached` で適用
+
+```rust
+// パッチ形式の例
+fn generate_patch(file_path: &str, hunk: &Hunk) -> String {
+    let mut patch = String::new();
+    patch.push_str(&format!("--- a/{}\n", file_path));
+    patch.push_str(&format!("+++ b/{}\n", file_path));
+    patch.push_str(&hunk.header);
+    patch.push('\n');
+    for line in &hunk.lines {
+        match line {
+            HunkLine::Context(s) => patch.push_str(&format!(" {}\n", s)),
+            HunkLine::Added(s) => patch.push_str(&format!("+{}\n", s)),
+            HunkLine::Removed(s) => patch.push_str(&format!("-{}\n", s)),
+        }
+    }
+    patch
+}
+```
+
+**注意点**:
+- 実装コストが高いため、最後の Phase として設定
+- diff パースの正確性が重要
+
+---
+
 ## 重要な制約（常に遵守）
 
 ### Git Status 取得タイミング
