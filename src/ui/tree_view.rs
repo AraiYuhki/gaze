@@ -171,31 +171,77 @@ fn render_tree_item(
 }
 
 /// マッチ部分をハイライトした Span のリストを返す
+///
+/// Unicode 文字列に対応するため、文字単位でマッチ位置を検索し、
+/// 元の文字列のバイト位置を使用してスライスする。
 fn highlight_match(
     text: &str,
     query: &str,
     match_style: Style,
     normal_color: Color,
 ) -> Vec<Span<'static>> {
-    let text_lower = text.to_lowercase();
+    if query.is_empty() {
+        return vec![Span::styled(
+            text.to_string(),
+            Style::default().fg(normal_color),
+        )];
+    }
+
     let query_lower = query.to_lowercase();
+    let query_chars: Vec<char> = query_lower.chars().collect();
 
     let mut spans = Vec::new();
     let mut last_end = 0;
 
-    // 大文字小文字を無視してマッチ位置を検索
-    for (start, _) in text_lower.match_indices(&query_lower) {
-        // マッチ前のテキスト
-        if start > last_end {
-            spans.push(Span::styled(
-                text[last_end..start].to_string(),
-                Style::default().fg(normal_color),
-            ));
+    // 元の文字列の文字とバイト位置を収集
+    let char_indices: Vec<(usize, char)> = text.char_indices().collect();
+
+    let mut i = 0;
+    while i < char_indices.len() {
+        // 現在位置からクエリがマッチするか確認
+        let mut matched = true;
+        let mut match_char_count = 0;
+
+        for (qi, qc) in query_chars.iter().enumerate() {
+            if i + qi >= char_indices.len() {
+                matched = false;
+                break;
+            }
+            let text_char_lower = char_indices[i + qi].1.to_lowercase().next().unwrap_or('\0');
+            if text_char_lower != *qc {
+                matched = false;
+                break;
+            }
+            match_char_count += 1;
         }
-        // マッチ部分
-        let end = start + query.len();
-        spans.push(Span::styled(text[start..end].to_string(), match_style));
-        last_end = end;
+
+        if matched && match_char_count == query_chars.len() {
+            let match_start_byte = char_indices[i].0;
+            let match_end_byte = if i + match_char_count < char_indices.len() {
+                char_indices[i + match_char_count].0
+            } else {
+                text.len()
+            };
+
+            // マッチ前のテキスト
+            if match_start_byte > last_end {
+                spans.push(Span::styled(
+                    text[last_end..match_start_byte].to_string(),
+                    Style::default().fg(normal_color),
+                ));
+            }
+
+            // マッチ部分
+            spans.push(Span::styled(
+                text[match_start_byte..match_end_byte].to_string(),
+                match_style,
+            ));
+
+            last_end = match_end_byte;
+            i += match_char_count;
+        } else {
+            i += 1;
+        }
     }
 
     // マッチ後のテキスト
