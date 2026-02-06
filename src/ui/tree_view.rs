@@ -342,6 +342,7 @@ pub fn get_node_at_index<'a>(
 }
 
 /// フラット化されたツリーの長さを取得
+#[allow(dead_code)] // AppState のキャッシュ経由で取得するようになったため直接呼び出しは減少
 pub fn get_flat_tree_len(root: &TreeNode, filter: &DisplayFilter) -> usize {
     flatten_tree(root, filter, 0).len()
 }

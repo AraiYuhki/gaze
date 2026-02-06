@@ -23,8 +23,17 @@ pub fn render(f: &mut Frame, state: &AppState) {
     render_status_bar(f, state, chunks[1]);
 
     // 確認ダイアログがあれば描画
-    if let ConfirmDialog::DiscardChanges { file_index } = &state.confirm_dialog {
-        render_confirm_dialog(f, state, *file_index);
+    match &state.confirm_dialog {
+        ConfirmDialog::DiscardChanges { file_index } => {
+            render_confirm_dialog(f, state, *file_index);
+        }
+        ConfirmDialog::Push => {
+            render_push_pull_dialog(f, "Push to remote?");
+        }
+        ConfirmDialog::Pull => {
+            render_push_pull_dialog(f, "Pull from remote?");
+        }
+        _ => {}
     }
 }
 
@@ -82,7 +91,7 @@ fn render_status_bar(f: &mut Frame, state: &AppState, area: Rect) {
     let message = state
         .status_message
         .as_deref()
-        .unwrap_or("j/k:move s:stage d:diff r:discard R:refresh q:quit");
+        .unwrap_or("j/k:move s:stage d:diff H:hunk r:discard c:commit P:push U:pull q:quit");
 
     let status_bar = Paragraph::new(message).style(Style::default().fg(Color::Cyan));
 
@@ -123,6 +132,35 @@ fn render_confirm_dialog(f: &mut Frame, state: &AppState, file_index: usize) {
         .style(Style::default().bg(Color::Black));
 
     // 背景を塗りつぶしてからダイアログを描画
+    f.render_widget(ratatui::widgets::Clear, area);
+    f.render_widget(dialog, area);
+}
+
+/// Push/Pull 確認ダイアログを描画する
+fn render_push_pull_dialog(f: &mut Frame, message: &str) {
+    let area = centered_rect(50, 20, f.area());
+
+    let text = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            message,
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from("Press 'y' to confirm, 'n' to cancel"),
+    ];
+
+    let dialog = Paragraph::new(text)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Confirm ")
+                .style(Style::default().bg(Color::Black)),
+        )
+        .style(Style::default().bg(Color::Black));
+
     f.render_widget(ratatui::widgets::Clear, area);
     f.render_widget(dialog, area);
 }

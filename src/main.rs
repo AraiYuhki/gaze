@@ -101,8 +101,11 @@ fn run_app(
     loop {
         // 描画（View に応じて切り替え）
         terminal.draw(|f| {
-            // コミットモード中はコミット画面を表示
-            if state.commit_mode != CommitMode::None {
+            // Hunk モード中は Hunk 画面を表示
+            if state.hunk_mode {
+                ui::hunk_view::render(f, state);
+            } else if state.commit_mode != CommitMode::None {
+                // コミットモード中はコミット画面を表示
                 ui::commit_view::render(f, state);
             } else {
                 match state.current_view {
@@ -129,6 +132,12 @@ fn run_app(
             // ヘルプ画面表示中は任意のキーで閉じる
             if state.show_help {
                 state.show_help = false;
+                continue;
+            }
+
+            // Hunk モード中のキー処理
+            if state.hunk_mode {
+                handle_hunk_mode_keys(state, key.code)?;
                 continue;
             }
 
@@ -200,6 +209,34 @@ fn run_app(
                     match key.code {
                         KeyCode::Char('y') | KeyCode::Char('Y') => {
                             if let Err(e) = state.checkout_branch() {
+                                state.set_status_message(&format!("Error: {}", e));
+                            }
+                        }
+                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                            state.cancel_confirm();
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+                ConfirmDialog::Push => {
+                    match key.code {
+                        KeyCode::Char('y') | KeyCode::Char('Y') => {
+                            if let Err(e) = state.execute_push() {
+                                state.set_status_message(&format!("Error: {}", e));
+                            }
+                        }
+                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                            state.cancel_confirm();
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+                ConfirmDialog::Pull => {
+                    match key.code {
+                        KeyCode::Char('y') | KeyCode::Char('Y') => {
+                            if let Err(e) = state.execute_pull() {
                                 state.set_status_message(&format!("Error: {}", e));
                             }
                         }
@@ -375,6 +412,24 @@ fn handle_status_view_keys(
             state.confirm_dialog = ConfirmDialog::Amend;
             state.set_status_message("Amend last commit? (y/n)");
         }
+        // Push（確認ダイアログを表示）
+        KeyCode::Char('P') => {
+            state.show_push_confirm();
+            state.set_status_message("Push to remote? (y/n)");
+        }
+        // Pull（確認ダイアログを表示）
+        KeyCode::Char('U') => {
+            state.show_pull_confirm();
+            if matches!(state.confirm_dialog, ConfirmDialog::Pull) {
+                state.set_status_message("Pull from remote? (y/n)");
+            }
+        }
+        // Hunk ステージングモード
+        KeyCode::Char('H') => {
+            if let Err(e) = state.start_hunk_mode() {
+                state.set_status_message(&format!("Error: {}", e));
+            }
+        }
         _ => {}
     }
     Ok(())
@@ -427,9 +482,21 @@ fn handle_tree_view_keys(state: &mut AppState, code: KeyCode) {
             state.select_last();
             state.clear_status_message();
         }
-        // 展開/折りたたみ
-        KeyCode::Enter | KeyCode::Char('l') => {
+        // 展開（Enter）
+        KeyCode::Enter => {
             state.expand_tree_node();
+        }
+        // 展開 or ファイルログ（l）
+        KeyCode::Char('l') => {
+            if state.is_selected_tree_node_file() {
+                // ファイルの場合はファイルログを表示
+                if let Err(e) = state.open_file_log() {
+                    state.set_status_message(&format!("Error: {}", e));
+                }
+            } else {
+                // ディレクトリの場合は展開
+                state.expand_tree_node();
+            }
         }
         KeyCode::Char('h') => {
             state.collapse_tree_node();
@@ -538,16 +605,35 @@ fn handle_log_view_keys(
                 }
             }
         }
-        // チェックアウト
+        // チェックアウト（ファイルログモードでは無効）
         KeyCode::Char('c') => {
-            state.show_checkout_confirm();
+            if !state.is_file_log_mode() {
+                state.show_checkout_confirm();
+            }
         }
         // 手動リフレッシュ
         KeyCode::Char('R') => {
-            if let Err(e) = state.refresh_log() {
+            let result = if state.is_file_log_mode() {
+                // ファイルログモードの場合は現在のパスでリフレッシュ
+                if let Some(path) = state.file_log_path.clone() {
+                    state.refresh_file_log(&path)
+                } else {
+                    Ok(())
+                }
+            } else {
+                state.refresh_log()
+            };
+            if let Err(e) = result {
                 state.set_status_message(&format!("Error: {}", e));
             } else {
                 state.set_status_message("Refreshed");
+            }
+        }
+        // ファイルログモードを終了して Tree View に戻る
+        KeyCode::Esc => {
+            if state.is_file_log_mode() {
+                state.clear_file_log();
+                state.switch_view(View::Tree);
             }
         }
         _ => {}
@@ -823,6 +909,33 @@ fn handle_branch_input_keys(state: &mut AppState, key: &event::KeyEvent) -> Resu
         }
         KeyCode::Char(c) => {
             state.branch_search_push(c);
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Hunk モードのキー処理
+fn handle_hunk_mode_keys(state: &mut AppState, code: KeyCode) -> Result<()> {
+    match code {
+        // ナビゲーション（hunk ヘッダ間を移動）
+        KeyCode::Char('j') | KeyCode::Down => {
+            state.hunk_select_next();
+            state.clear_status_message();
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            state.hunk_select_previous();
+            state.clear_status_message();
+        }
+        // 選択した hunk をステージ
+        KeyCode::Char('s') => {
+            if let Err(e) = state.stage_selected_hunk() {
+                state.set_status_message(&format!("Error: {}", e));
+            }
+        }
+        // Hunk モードを終了
+        KeyCode::Esc | KeyCode::Char('q') => {
+            state.cancel_hunk_mode();
         }
         _ => {}
     }

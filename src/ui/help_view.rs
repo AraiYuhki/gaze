@@ -42,6 +42,9 @@ pub fn render(f: &mut Frame) {
         Line::from("  r          Discard changes"),
         Line::from("  c          Commit"),
         Line::from("  C          Amend commit"),
+        Line::from("  H          Hunk staging"),
+        Line::from("  P          Push"),
+        Line::from("  U          Pull"),
         Line::from("  R          Refresh"),
         Line::from(""),
         Line::from(vec![Span::styled(
@@ -49,7 +52,8 @@ pub fn render(f: &mut Frame) {
             Style::default().fg(Color::Yellow),
         )]),
         Line::from("  j/k, ↓/↑   Navigate"),
-        Line::from("  Enter, l   Expand"),
+        Line::from("  Enter      Expand directory"),
+        Line::from("  l          Expand / File log"),
         Line::from("  h          Collapse"),
         Line::from("  H          Toggle filter"),
         Line::from("  /          Search"),
@@ -62,6 +66,7 @@ pub fn render(f: &mut Frame) {
         Line::from("  j/k, ↓/↑   Navigate"),
         Line::from("  Enter      Show commit"),
         Line::from("  c          Checkout"),
+        Line::from("  Esc        Exit file log"),
         Line::from(""),
         Line::from(vec![Span::styled(
             "=== Stash View ===",

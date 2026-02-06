@@ -1,7 +1,37 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::domain::StatusKind;
+use crate::domain::{FileStatus, StatusKind};
 use crate::error::Result;
+
+/// ステータスマップのエントリ（index と worktree のステータスを保持）
+#[derive(Debug, Clone, Copy)]
+pub struct StatusEntry {
+    pub index: StatusKind,
+    pub worktree: StatusKind,
+}
+
+/// 相対パスからステータスへのマッピング
+pub type StatusMap = HashMap<PathBuf, StatusEntry>;
+
+/// FileStatus のスライスから HashMap を構築する
+///
+/// 複数の TreeNode に対してステータスを適用する場合は、
+/// この関数で1回だけ HashMap を構築し、各ノードの `apply_status_map` に渡す。
+pub fn build_status_map(cache: &[FileStatus]) -> StatusMap {
+    cache
+        .iter()
+        .map(|s| {
+            (
+                s.path.clone(),
+                StatusEntry {
+                    index: s.index,
+                    worktree: s.worktree,
+                },
+            )
+        })
+        .collect()
+}
 
 /// ノードの種類
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,27 +147,52 @@ impl TreeNode {
 
     /// Status キャッシュから Git ステータスを適用する
     ///
+    /// HashMap を使用して O(children + cache) で検索する。
+    /// 内部で HashMap を構築するため、単一ノードへの適用に適している。
+    /// 複数ノードへの連続適用には `build_status_map` + `apply_status_map` を使う。
+    ///
     /// # 重要
     /// - このメソッド内で git コマンドを実行しないこと
     /// - キャッシュからの検索のみ行う
+    #[allow(dead_code)] // apply_status_map への移行済みだが、単発用途の便利メソッドとして残す
     pub fn apply_status_cache(&mut self, cache: &[crate::domain::FileStatus]) {
+        let status_map = build_status_map(cache);
+        self.apply_status_map(&status_map);
+    }
+
+    /// HashMap 化済みのステータスマップから Git ステータスを適用する
+    ///
+    /// 複数ノードに対して連続適用する場合は、呼び出し側で `build_status_map` を1回だけ
+    /// 呼び出してこのメソッドを使うことで、HashMap の再構築コストを回避できる。
+    pub fn apply_status_map(&mut self, status_map: &StatusMap) {
         if let Some(children) = &mut self.children {
             for child in children {
                 // まずステータスをリセット（クリーンになったファイルの古いステータスを消す）
                 child.git_status = None;
 
-                // キャッシュからステータスを検索
-                // child.path の末尾コンポーネントと cache の path が完全一致するものを探す
-                if let Some(status) = cache.iter().find(|s| {
-                    // 絶対パスの末尾から cache の相対パスと比較
-                    child.path.ends_with(&s.path)
-                }) {
-                    // ワークツリーのステータスを優先、なければインデックスのステータス
-                    if status.worktree != StatusKind::Unmodified {
-                        child.git_status = Some(status.worktree);
-                    } else if status.index != StatusKind::Unmodified {
-                        child.git_status = Some(status.index);
+                // child.path（絶対パス）から相対パスサフィックスを取得して HashMap で O(1) 検索
+                // status_map のキーは相対パス（例: "src/main.rs"）
+                // child.path は絶対パス（例: "/project/src/main.rs"）
+                // repo_root をキーとして持てないため、child.path の各サフィックスを試行する
+                // 実用上、status cache のパスは浅い（1〜3階層）ため、サフィックス試行は高速
+                let mut current = child.path.as_path();
+                loop {
+                    if let Some(entry) = status_map.get(current) {
+                        if entry.worktree != StatusKind::Unmodified {
+                            child.git_status = Some(entry.worktree);
+                        } else if entry.index != StatusKind::Unmodified {
+                            child.git_status = Some(entry.index);
+                        }
+                        break;
                     }
+                    // 先頭コンポーネントを1つ削って短いサフィックスで再試行
+                    let mut components = current.components();
+                    components.next();
+                    let rest = components.as_path();
+                    if rest.as_os_str().is_empty() || rest == current {
+                        break;
+                    }
+                    current = rest;
                 }
             }
         }
@@ -160,6 +215,93 @@ impl TreeNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_apply_status_map_sets_worktree_status() {
+        // Arrange
+        let mut root = TreeNode::new_dir("project".to_string(), PathBuf::from("/project"));
+        root.children = Some(vec![TreeNode {
+            name: "main.rs".to_string(),
+            path: PathBuf::from("/project/src/main.rs"),
+            kind: NodeKind::File,
+            expanded: false,
+            git_status: None,
+            children: Some(vec![]),
+        }]);
+
+        let cache = vec![FileStatus {
+            index: StatusKind::Unmodified,
+            worktree: StatusKind::Modified,
+            path: PathBuf::from("src/main.rs"),
+            original_path: None,
+        }];
+        let status_map = build_status_map(&cache);
+
+        // Act
+        root.apply_status_map(&status_map);
+
+        // Assert
+        let child = &root.children.as_ref().unwrap()[0];
+        assert_eq!(child.git_status, Some(StatusKind::Modified));
+    }
+
+    #[test]
+    fn test_apply_status_map_prefers_worktree_over_index() {
+        // Arrange
+        let mut root = TreeNode::new_dir("project".to_string(), PathBuf::from("/project"));
+        root.children = Some(vec![TreeNode {
+            name: "main.rs".to_string(),
+            path: PathBuf::from("/project/src/main.rs"),
+            kind: NodeKind::File,
+            expanded: false,
+            git_status: None,
+            children: Some(vec![]),
+        }]);
+
+        let cache = vec![FileStatus {
+            index: StatusKind::Added,
+            worktree: StatusKind::Modified,
+            path: PathBuf::from("src/main.rs"),
+            original_path: None,
+        }];
+        let status_map = build_status_map(&cache);
+
+        // Act
+        root.apply_status_map(&status_map);
+
+        // Assert: worktree が Unmodified でないので worktree が優先される
+        let child = &root.children.as_ref().unwrap()[0];
+        assert_eq!(child.git_status, Some(StatusKind::Modified));
+    }
+
+    #[test]
+    fn test_apply_status_map_uses_index_when_worktree_unmodified() {
+        // Arrange
+        let mut root = TreeNode::new_dir("project".to_string(), PathBuf::from("/project"));
+        root.children = Some(vec![TreeNode {
+            name: "main.rs".to_string(),
+            path: PathBuf::from("/project/src/main.rs"),
+            kind: NodeKind::File,
+            expanded: false,
+            git_status: None,
+            children: Some(vec![]),
+        }]);
+
+        let cache = vec![FileStatus {
+            index: StatusKind::Added,
+            worktree: StatusKind::Unmodified,
+            path: PathBuf::from("src/main.rs"),
+            original_path: None,
+        }];
+        let status_map = build_status_map(&cache);
+
+        // Act
+        root.apply_status_map(&status_map);
+
+        // Assert: worktree が Unmodified なので index が使われる
+        let child = &root.children.as_ref().unwrap()[0];
+        assert_eq!(child.git_status, Some(StatusKind::Added));
+    }
 
     #[test]
     fn test_new_dir_creates_unloaded_directory() {

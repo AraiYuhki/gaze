@@ -1,5 +1,6 @@
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use crate::error::{AppError, Result};
 
@@ -40,6 +41,38 @@ impl GitCli {
             .args(args)
             .current_dir(&self.repo_root)
             .output()?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(AppError::GitCommand(stderr.to_string()));
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    /// Git コマンドを実行し、標準入力にデータを渡して標準出力を返す
+    ///
+    /// `git apply --cached` のようにパッチデータを stdin で渡す場合に使用する。
+    ///
+    /// # Errors
+    /// - コマンド実行に失敗した場合
+    /// - コマンドが非ゼロの終了コードを返した場合
+    pub fn execute_with_stdin(&self, args: &[&str], stdin_data: &str) -> Result<String> {
+        let mut child = Command::new("git")
+            .args(args)
+            .current_dir(&self.repo_root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+
+        // stdin にデータを書き込む
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(stdin_data.as_bytes())?;
+            // stdin をドロップして EOF を送信
+        }
+
+        let output = child.wait_with_output()?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

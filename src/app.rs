@@ -1,8 +1,12 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::cli::{parse_branch_list, parse_log, parse_stash_list, parse_status, GitCli};
+use crate::cli::{
+    generate_patch, parse_branch_list, parse_diff_hunks, parse_log, parse_stash_list, parse_status,
+    GitCli,
+};
 use crate::domain::{
-    BranchEntry, FileStatus, GraphLine, NodeKind, StashEntry, StatusKind, TreeNode,
+    build_status_map, BranchEntry, FileDiff, FileStatus, GraphLine, NodeKind, StashEntry,
+    StatusKind, TreeNode,
 };
 use crate::error::Result;
 use crate::filter::DisplayFilter;
@@ -33,6 +37,10 @@ pub enum ConfirmDialog {
     DropStash { stash_index: usize },
     /// ブランチ切り替えの確認
     CheckoutBranch { branch_name: String },
+    /// Push の確認
+    Push,
+    /// Pull の確認
+    Pull,
 }
 
 /// コミットモードの種類
@@ -92,6 +100,11 @@ pub struct AppState {
     pub tree_selected_index: usize,
     /// 表示フィルタ
     pub display_filter: DisplayFilter,
+    /// フラット化されたツリーのキャッシュ（パスと深さ）
+    /// ツリー構造が変わった時に tree_flat_dirty を true にして再構築する
+    tree_flat_cache: Vec<(PathBuf, usize)>,
+    /// フラットキャッシュが無効化されているか
+    tree_flat_dirty: bool,
     /// Log View のキャッシュ
     pub log_cache: Vec<GraphLine>,
     /// Log View での選択インデックス
@@ -134,6 +147,25 @@ pub struct AppState {
     pub branch_search_query: String,
     /// Branch View 入力モード
     pub branch_input_mode: BranchInputMode,
+    /// フィルタ済み Branch インデックスのキャッシュ
+    /// branch_cache と branch_search_query が変わった時に再構築する
+    filtered_branch_indices: Vec<usize>,
+    /// Hunk モードかどうか
+    pub hunk_mode: bool,
+    /// Hunk モードのファイル diff 一覧
+    pub hunk_file_diffs: Vec<FileDiff>,
+    /// Hunk モードでの選択インデックス（フラット化されたリスト上のインデックス）
+    pub hunk_selected_index: usize,
+    /// Hunk モードの対象ファイルパス
+    pub hunk_target_path: Option<PathBuf>,
+    /// Hunk モードが --cached（ステージ済み）の diff を対象にしているか
+    hunk_is_cached: bool,
+    /// ファイルログ表示中のファイルパス（None の場合は通常の Log View）
+    pub file_log_path: Option<std::path::PathBuf>,
+    /// ファイルログのキャッシュ
+    pub file_log_cache: Vec<GraphLine>,
+    /// ファイルログでの選択インデックス
+    pub file_log_selected_index: usize,
 }
 
 impl AppState {
@@ -168,6 +200,8 @@ impl AppState {
             tree_root,
             tree_selected_index: 0,
             display_filter: DisplayFilter::load(),
+            tree_flat_cache: Vec::new(),
+            tree_flat_dirty: true,
             log_cache: Vec::new(),
             log_selected_index: 0,
             show_help: false,
@@ -189,11 +223,21 @@ impl AppState {
             branch_selected_index: 0,
             branch_search_query: String::new(),
             branch_input_mode: BranchInputMode::None,
+            filtered_branch_indices: Vec::new(),
+            hunk_mode: false,
+            hunk_file_diffs: Vec::new(),
+            hunk_selected_index: 0,
+            hunk_target_path: None,
+            hunk_is_cached: false,
+            file_log_path: None,
+            file_log_cache: Vec::new(),
+            file_log_selected_index: 0,
         };
         // 起動時に1回だけ status を取得
         state.refresh_status()?;
         // Tree のステータスを適用
-        state.tree_root.apply_status_cache(&state.status_cache);
+        let status_map = build_status_map(&state.status_cache);
+        state.tree_root.apply_status_map(&status_map);
         Ok(state)
     }
 
@@ -226,7 +270,8 @@ impl AppState {
                     self.apply_status_to_tree();
                 }
                 View::Log => {
-                    // Log View 切り替え時にログを取得
+                    // Log View 切り替え時にファイルログモードをクリアしてログを取得
+                    self.clear_file_log();
                     let _ = self.refresh_log();
                 }
                 View::Status => {
@@ -264,6 +309,39 @@ impl AppState {
         Ok(())
     }
 
+    /// 特定ファイルの Git log を取得してキャッシュを更新する
+    ///
+    /// # Arguments
+    /// * `path` - ログを取得するファイルのパス（リポジトリルートからの相対パス）
+    pub fn refresh_file_log(&mut self, path: &Path) -> Result<()> {
+        let path_str = path.to_string_lossy();
+        let output = self.git.execute(&[
+            "log",
+            "--oneline",
+            "--follow",
+            "-n",
+            &LOG_LIMIT.to_string(),
+            "--",
+            &path_str,
+        ])?;
+        self.file_log_cache = parse_log(&output);
+        self.file_log_selected_index = 0;
+        self.file_log_path = Some(path.to_path_buf());
+        Ok(())
+    }
+
+    /// ファイルログモードをクリアして通常の Log View に戻る
+    pub fn clear_file_log(&mut self) {
+        self.file_log_path = None;
+        self.file_log_cache.clear();
+        self.file_log_selected_index = 0;
+    }
+
+    /// ファイルログモードかどうかを返す
+    pub fn is_file_log_mode(&self) -> bool {
+        self.file_log_path.is_some()
+    }
+
     /// 選択を1つ下に移動
     pub fn select_next(&mut self) {
         match self.current_view {
@@ -274,13 +352,18 @@ impl AppState {
                 }
             }
             View::Tree => {
-                let max = tree_view::get_flat_tree_len(&self.tree_root, &self.display_filter);
+                let max = self.get_tree_flat_len();
                 if max > 0 {
                     self.tree_selected_index = (self.tree_selected_index + 1).min(max - 1);
                 }
             }
             View::Log => {
-                if !self.log_cache.is_empty() {
+                if self.is_file_log_mode() {
+                    if !self.file_log_cache.is_empty() {
+                        self.file_log_selected_index =
+                            (self.file_log_selected_index + 1).min(self.file_log_cache.len() - 1);
+                    }
+                } else if !self.log_cache.is_empty() {
                     self.log_selected_index =
                         (self.log_selected_index + 1).min(self.log_cache.len() - 1);
                 }
@@ -311,7 +394,11 @@ impl AppState {
                 self.tree_selected_index = self.tree_selected_index.saturating_sub(1);
             }
             View::Log => {
-                self.log_selected_index = self.log_selected_index.saturating_sub(1);
+                if self.is_file_log_mode() {
+                    self.file_log_selected_index = self.file_log_selected_index.saturating_sub(1);
+                } else {
+                    self.log_selected_index = self.log_selected_index.saturating_sub(1);
+                }
             }
             View::Stash => {
                 self.stash_selected_index = self.stash_selected_index.saturating_sub(1);
@@ -332,7 +419,11 @@ impl AppState {
                 self.tree_selected_index = 0;
             }
             View::Log => {
-                self.log_selected_index = 0;
+                if self.is_file_log_mode() {
+                    self.file_log_selected_index = 0;
+                } else {
+                    self.log_selected_index = 0;
+                }
             }
             View::Stash => {
                 self.stash_selected_index = 0;
@@ -352,13 +443,17 @@ impl AppState {
                 }
             }
             View::Tree => {
-                let max = tree_view::get_flat_tree_len(&self.tree_root, &self.display_filter);
+                let max = self.get_tree_flat_len();
                 if max > 0 {
                     self.tree_selected_index = max - 1;
                 }
             }
             View::Log => {
-                if !self.log_cache.is_empty() {
+                if self.is_file_log_mode() {
+                    if !self.file_log_cache.is_empty() {
+                        self.file_log_selected_index = self.file_log_cache.len() - 1;
+                    }
+                } else if !self.log_cache.is_empty() {
                     self.log_selected_index = self.log_cache.len() - 1;
                 }
             }
@@ -475,13 +570,47 @@ impl AppState {
         self.status_message = None;
     }
 
+    // --- Tree View フラットキャッシュ管理 ---
+
+    /// フラットキャッシュを無効化する
+    ///
+    /// ツリー構造に影響する操作（展開/折りたたみ/フィルタ変更等）の後に呼び出す
+    fn invalidate_tree_flat_cache(&mut self) {
+        self.tree_flat_dirty = true;
+    }
+
+    /// フラットキャッシュを必要に応じて再構築する
+    fn ensure_tree_flat_cache(&mut self) {
+        if !self.tree_flat_dirty {
+            return;
+        }
+        let flat = tree_view::flatten_tree(&self.tree_root, &self.display_filter, 0);
+        self.tree_flat_cache = flat
+            .into_iter()
+            .map(|(node, depth)| (node.path.clone(), depth))
+            .collect();
+        self.tree_flat_dirty = false;
+    }
+
+    /// キャッシュ済みのフラットツリーの長さを取得する
+    pub fn get_tree_flat_len(&mut self) -> usize {
+        self.ensure_tree_flat_cache();
+        self.tree_flat_cache.len()
+    }
+
+    /// キャッシュ済みのフラットツリーから指定インデックスのパスを取得する
+    pub fn get_tree_flat_path(&mut self, index: usize) -> Option<PathBuf> {
+        self.ensure_tree_flat_cache();
+        self.tree_flat_cache.get(index).map(|(p, _)| p.clone())
+    }
+
     // --- Tree View 用メソッド ---
 
     /// 選択されているツリーノードを展開/折りたたみする
     #[allow(dead_code)] // TODO(Phase 2): toggle 機能は Enter キーでのみ使用予定
     pub fn toggle_tree_node(&mut self) {
-        // borrow checker 対策: status_cache を先にクローン
-        let cache = self.status_cache.clone();
+        // borrow checker 対策: status_map を先に構築
+        let status_map = build_status_map(&self.status_cache);
 
         if let Some(node) = self.get_selected_tree_node_mut() {
             if node.kind == NodeKind::Directory {
@@ -493,27 +622,29 @@ impl AppState {
                     if node.children.is_none() {
                         // 遅延ロード
                         let _ = node.load_children();
-                        node.apply_status_cache(&cache);
+                        node.apply_status_map(&status_map);
                     }
                     node.expanded = true;
                 }
+                self.invalidate_tree_flat_cache();
             }
         }
     }
 
     /// 選択されているツリーノードを展開する
     pub fn expand_tree_node(&mut self) {
-        // borrow checker 対策: status_cache を先にクローン
-        let cache = self.status_cache.clone();
+        // borrow checker 対策: status_map を先に構築
+        let status_map = build_status_map(&self.status_cache);
 
         if let Some(node) = self.get_selected_tree_node_mut() {
             if node.kind == NodeKind::Directory && !node.expanded {
                 if node.children.is_none() {
                     // 遅延ロード
                     let _ = node.load_children();
-                    node.apply_status_cache(&cache);
+                    node.apply_status_map(&status_map);
                 }
                 node.expanded = true;
+                self.invalidate_tree_flat_cache();
             }
         }
     }
@@ -523,6 +654,7 @@ impl AppState {
         if let Some(node) = self.get_selected_tree_node_mut() {
             if node.kind == NodeKind::Directory && node.expanded {
                 node.expanded = false;
+                self.invalidate_tree_flat_cache();
             }
         }
     }
@@ -530,8 +662,9 @@ impl AppState {
     /// 表示フィルタを切り替える
     pub fn toggle_display_filter(&mut self) {
         self.display_filter.toggle();
+        self.invalidate_tree_flat_cache();
         // 選択インデックスを調整
-        let max = tree_view::get_flat_tree_len(&self.tree_root, &self.display_filter);
+        let max = self.get_tree_flat_len();
         if max > 0 && self.tree_selected_index >= max {
             self.tree_selected_index = max - 1;
         }
@@ -544,13 +677,57 @@ impl AppState {
         self.apply_status_to_tree();
     }
 
+    /// 選択されている Tree ノードがファイルかどうかを返す
+    pub fn is_selected_tree_node_file(&mut self) -> bool {
+        let path = self.get_tree_flat_path(self.tree_selected_index);
+        path.and_then(|p| {
+            // パスでノードを探してファイルかどうかを判定
+            find_node_by_path(&self.tree_root, &p)
+        })
+        .is_some_and(|node| node.kind == NodeKind::File)
+    }
+
+    /// 選択されている Tree ノードのパスを取得する
+    pub fn get_selected_tree_node_path(&mut self) -> Option<PathBuf> {
+        self.get_tree_flat_path(self.tree_selected_index)
+    }
+
+    /// Tree View で選択されているファイルのログを開く
+    ///
+    /// # Errors
+    /// - ファイルが選択されていない場合
+    /// - Git コマンドの実行に失敗した場合
+    pub fn open_file_log(&mut self) -> Result<()> {
+        // ファイルでない場合は何もしない
+        if !self.is_selected_tree_node_file() {
+            return Ok(());
+        }
+
+        // パスを取得
+        let path = self.get_selected_tree_node_path();
+        if let Some(path) = path {
+            // リポジトリルートからの相対パスを計算
+            let repo_root = self.git.repo_root().to_path_buf();
+            let relative_path = path.strip_prefix(&repo_root).unwrap_or(&path);
+            self.refresh_file_log(relative_path)?;
+            self.current_view = View::Log;
+        }
+        Ok(())
+    }
+
     // --- Log View 用メソッド ---
 
     /// 選択されているコミットのハッシュを取得する
     pub fn selected_commit_hash(&self) -> Option<&str> {
-        self.log_cache
-            .get(self.log_selected_index)
-            .and_then(|line| line.hash.as_deref())
+        if self.is_file_log_mode() {
+            self.file_log_cache
+                .get(self.file_log_selected_index)
+                .and_then(|line| line.hash.as_deref())
+        } else {
+            self.log_cache
+                .get(self.log_selected_index)
+                .and_then(|line| line.hash.as_deref())
+        }
     }
 
     /// 選択されているコミットの詳細を取得する（色付き）
@@ -559,7 +736,14 @@ impl AppState {
     /// - Git コマンドの実行に失敗した場合
     pub fn get_commit_details(&self) -> Result<String> {
         if let Some(hash) = self.selected_commit_hash() {
-            self.git.execute(&["show", "--color=always", hash])
+            // ファイルログモードの場合はそのファイルの変更のみ表示
+            if let Some(ref path) = self.file_log_path {
+                let path_str = path.to_string_lossy();
+                self.git
+                    .execute(&["show", "--color=always", hash, "--", &path_str])
+            } else {
+                self.git.execute(&["show", "--color=always", hash])
+            }
         } else {
             Ok(String::new())
         }
@@ -655,13 +839,13 @@ impl AppState {
 
         let target_path = self.tree_search_matches[self.tree_search_current_match].clone();
 
-        // 親ディレクトリを展開する
+        // 親ディレクトリを展開する（キャッシュは expand 内で無効化される）
         self.expand_parents_for_path(&target_path);
 
-        // 展開後にインデックスを取得
-        let flat = tree_view::flatten_tree(&self.tree_root, &self.display_filter, 0);
-        for (index, (node, _)) in flat.iter().enumerate() {
-            if node.path == target_path {
+        // キャッシュを再構築してインデックスを取得
+        self.ensure_tree_flat_cache();
+        for (index, (path, _)) in self.tree_flat_cache.iter().enumerate() {
+            if *path == target_path {
                 self.tree_selected_index = index;
                 break;
             }
@@ -684,23 +868,28 @@ impl AppState {
         // ルートに近い順に展開
         ancestors.reverse();
 
-        // status_cache を先にクローン（borrow checker 対策）
-        let cache = self.status_cache.clone();
+        // HashMap を1回だけ構築（borrow checker 対策も兼ねる）
+        let status_map = build_status_map(&self.status_cache);
 
+        let mut changed = false;
         for ancestor_path in ancestors {
             if let Some(node) = find_node_by_path_mut(&mut self.tree_root, &ancestor_path) {
                 if node.kind == NodeKind::Directory && !node.expanded {
                     if node.children.is_none() {
                         let _ = node.load_children();
-                        node.apply_status_cache(&cache);
+                        node.apply_status_map(&status_map);
                     }
                     node.expanded = true;
+                    changed = true;
                 }
             }
         }
+        if changed {
+            self.invalidate_tree_flat_cache();
+        }
     }
 
-    /// 検索マッチリストを更新する（全ノードを検索、折りたたみ状態も含む）
+    /// 検索マッチリストを更新する（ロード済みノードのみ検索）
     fn update_tree_search_matches(&mut self) {
         self.tree_search_matches.clear();
         self.tree_search_current_match = 0;
@@ -711,11 +900,8 @@ impl AppState {
 
         let query_lower = self.tree_search_query.to_lowercase();
 
-        // 全ノードを再帰的に検索（折りたたまれたノードも含む）
-        // まず未ロードのディレクトリもロードする必要があるため、
-        // ツリーを走査しながらマッチを収集
-        let cache = self.status_cache.clone();
-        self.search_tree_recursive(&query_lower, &cache);
+        // ロード済みのノードのみ検索（未ロードディレクトリは自動ロードしない）
+        self.search_tree_recursive(&query_lower);
 
         // 最初のマッチへジャンプ（検索モード中）
         if !self.tree_search_matches.is_empty() {
@@ -724,22 +910,17 @@ impl AppState {
     }
 
     /// ツリーを再帰的に検索してマッチを収集する
-    fn search_tree_recursive(&mut self, query: &str, cache: &[FileStatus]) {
-        // 検索のためにツリー全体を走査
+    ///
+    /// ロード済みのノードのみ検索する。未ロードのディレクトリは自動ロードしない。
+    /// 大規模リポジトリでの検索性能を確保するため。
+    fn search_tree_recursive(&mut self, query: &str) {
         fn collect_matches(
-            node: &mut TreeNode,
+            node: &TreeNode,
             query: &str,
             filter: &DisplayFilter,
-            cache: &[FileStatus],
             matches: &mut Vec<std::path::PathBuf>,
         ) {
-            // 未ロードの場合はロード
-            if node.kind == NodeKind::Directory && node.children.is_none() {
-                let _ = node.load_children();
-                node.apply_status_cache(cache);
-            }
-
-            if let Some(children) = &mut node.children {
+            if let Some(children) = &node.children {
                 for child in children {
                     // フィルタで非表示のものはスキップ
                     if filter.should_hide(&child.path) {
@@ -752,9 +933,9 @@ impl AppState {
                         matches.push(child.path.clone());
                     }
 
-                    // ディレクトリの場合は再帰
-                    if child.kind == NodeKind::Directory {
-                        collect_matches(child, query, filter, cache, matches);
+                    // ディレクトリの場合はロード済みの子のみ再帰
+                    if child.kind == NodeKind::Directory && child.children.is_some() {
+                        collect_matches(child, query, filter, matches);
                     }
                 }
             }
@@ -762,40 +943,43 @@ impl AppState {
 
         let filter = self.display_filter.clone();
         let mut matches = Vec::new();
-        collect_matches(&mut self.tree_root, query, &filter, cache, &mut matches);
+        collect_matches(&self.tree_root, query, &filter, &mut matches);
         self.tree_search_matches = matches;
     }
 
     /// Status キャッシュをツリーに適用する
+    ///
+    /// HashMap を1回だけ構築し、全ノードに対して再利用する
     fn apply_status_to_tree(&mut self) {
+        let status_map = build_status_map(&self.status_cache);
+
         // ルートノードにステータスを適用
-        self.tree_root.apply_status_cache(&self.status_cache);
+        self.tree_root.apply_status_map(&status_map);
 
         // 展開されている子ノードにも再帰的に適用
-        fn apply_recursive(node: &mut TreeNode, cache: &[FileStatus]) {
+        fn apply_recursive(node: &mut TreeNode, status_map: &crate::domain::StatusMap) {
             if let Some(children) = &mut node.children {
                 for child in children {
-                    child.apply_status_cache(cache);
+                    child.apply_status_map(status_map);
                     if child.expanded {
-                        apply_recursive(child, cache);
+                        apply_recursive(child, status_map);
                     }
                 }
             }
         }
-        apply_recursive(&mut self.tree_root, &self.status_cache);
+        apply_recursive(&mut self.tree_root, &status_map);
     }
 
     /// 選択されているツリーノードへの可変参照を取得する
     fn get_selected_tree_node_mut(&mut self) -> Option<&mut TreeNode> {
-        let index = self.tree_selected_index;
-        let filter = &self.display_filter;
+        self.ensure_tree_flat_cache();
+        let target_path = self
+            .tree_flat_cache
+            .get(self.tree_selected_index)
+            .map(|(p, _)| p.clone());
 
-        // フラット化してインデックスを取得し、対応するノードを探す
-        let flat = tree_view::flatten_tree(&self.tree_root, filter, 0);
-        if let Some((target_node, _)) = flat.get(index) {
-            let target_path = target_node.path.clone();
-            // パスでノードを探して可変参照を返す
-            find_node_by_path_mut(&mut self.tree_root, &target_path)
+        if let Some(path) = target_path {
+            find_node_by_path_mut(&mut self.tree_root, &path)
         } else {
             None
         }
@@ -1150,24 +1334,38 @@ impl AppState {
     pub fn refresh_branches(&mut self) -> Result<()> {
         let output = self.git.execute(&["branch", "-a"])?;
         self.branch_cache = parse_branch_list(&output);
+        self.rebuild_filtered_branches();
         // 選択インデックスが範囲外になった場合は調整
-        let filtered_len = self.filtered_branches().len();
+        let filtered_len = self.filtered_branch_indices.len();
         if filtered_len > 0 && self.branch_selected_index >= filtered_len {
             self.branch_selected_index = filtered_len - 1;
         }
         Ok(())
     }
 
-    /// フィルタリングされた Branch 一覧を取得
+    /// フィルタリングされた Branch 一覧を取得（キャッシュ使用）
     pub fn filtered_branches(&self) -> Vec<&BranchEntry> {
+        self.filtered_branch_indices
+            .iter()
+            .filter_map(|&i| self.branch_cache.get(i))
+            .collect()
+    }
+
+    /// フィルタ済み Branch インデックスキャッシュを再構築する
+    ///
+    /// branch_cache または branch_search_query が変わった後に呼び出す
+    fn rebuild_filtered_branches(&mut self) {
         if self.branch_search_query.is_empty() {
-            self.branch_cache.iter().collect()
+            self.filtered_branch_indices = (0..self.branch_cache.len()).collect();
         } else {
             let query_lower = self.branch_search_query.to_lowercase();
-            self.branch_cache
+            self.filtered_branch_indices = self
+                .branch_cache
                 .iter()
-                .filter(|b| b.name.to_lowercase().contains(&query_lower))
-                .collect()
+                .enumerate()
+                .filter(|(_, b)| b.name.to_lowercase().contains(&query_lower))
+                .map(|(i, _)| i)
+                .collect();
         }
     }
 
@@ -1189,6 +1387,7 @@ impl AppState {
     pub fn cancel_branch_search(&mut self) {
         self.branch_input_mode = BranchInputMode::None;
         self.branch_search_query.clear();
+        self.rebuild_filtered_branches();
         self.branch_selected_index = 0;
     }
 
@@ -1201,6 +1400,7 @@ impl AppState {
     /// Branch 検索クエリに文字を追加
     pub fn branch_search_push(&mut self, c: char) {
         self.branch_search_query.push(c);
+        self.rebuild_filtered_branches();
         // 検索結果が変わる可能性があるので選択インデックスをリセット
         self.branch_selected_index = 0;
     }
@@ -1208,6 +1408,7 @@ impl AppState {
     /// Branch 検索クエリから文字を削除
     pub fn branch_search_pop(&mut self) {
         self.branch_search_query.pop();
+        self.rebuild_filtered_branches();
         // 検索結果が変わる可能性があるので選択インデックスをリセット
         self.branch_selected_index = 0;
     }
@@ -1215,6 +1416,7 @@ impl AppState {
     /// Branch 検索をクリア
     pub fn clear_branch_search(&mut self) {
         self.branch_search_query.clear();
+        self.rebuild_filtered_branches();
         self.branch_selected_index = 0;
     }
 
@@ -1285,9 +1487,286 @@ impl AppState {
         }
         Ok(())
     }
+
+    // --- Hunk モード関連メソッド ---
+
+    /// Hunk モードを開始する（選択中のファイルの diff をパースして表示）
+    ///
+    /// # Errors
+    /// - Git コマンドの実行に失敗した場合
+    pub fn start_hunk_mode(&mut self) -> Result<()> {
+        if let Some(file) = self.status_cache.get(self.selected_index).cloned() {
+            let path_str = file.path.to_string_lossy().to_string();
+
+            // ステージ済みか否かで diff の取得モードを決定
+            let is_cached =
+                file.index != StatusKind::Unmodified && file.index != StatusKind::Untracked;
+
+            // 色なしの diff を取得（パース用）
+            let diff_output = if is_cached {
+                self.git.execute(&["diff", "--cached", &path_str])?
+            } else {
+                self.git.execute(&["diff", &path_str])?
+            };
+
+            if diff_output.is_empty() {
+                self.set_status_message("No diff available for this file");
+                return Ok(());
+            }
+
+            let file_diffs = parse_diff_hunks(&diff_output);
+            if file_diffs.is_empty() {
+                self.set_status_message("No hunks found in diff");
+                return Ok(());
+            }
+
+            self.hunk_file_diffs = file_diffs;
+            // parse_diff_hunks は hunk が空の FileDiff を生成しないため、
+            // インデックス 1 は必ず最初の hunk ヘッダ（0 はファイルヘッダ）
+            self.hunk_selected_index = 1;
+            self.hunk_target_path = Some(file.path.clone());
+            self.hunk_is_cached = is_cached;
+            self.hunk_mode = true;
+        }
+        Ok(())
+    }
+
+    /// Hunk モードを終了する
+    pub fn cancel_hunk_mode(&mut self) {
+        self.hunk_mode = false;
+        self.hunk_file_diffs.clear();
+        self.hunk_selected_index = 0;
+        self.hunk_target_path = None;
+        self.hunk_is_cached = false;
+    }
+
+    /// Hunk モードでの選択を下に移動（hunk ヘッダのみに移動）
+    pub fn hunk_select_next(&mut self) {
+        let hunk_indices = self.get_hunk_header_indices();
+        if let Some(current_pos) = hunk_indices
+            .iter()
+            .position(|&i| i == self.hunk_selected_index)
+        {
+            if current_pos + 1 < hunk_indices.len() {
+                self.hunk_selected_index = hunk_indices[current_pos + 1];
+            }
+        } else {
+            // 現在位置が hunk ヘッダでない場合、次の hunk ヘッダに移動
+            if let Some(&next) = hunk_indices.iter().find(|&&i| i > self.hunk_selected_index) {
+                self.hunk_selected_index = next;
+            }
+        }
+    }
+
+    /// Hunk モードでの選択を上に移動（hunk ヘッダのみに移動）
+    pub fn hunk_select_previous(&mut self) {
+        let hunk_indices = self.get_hunk_header_indices();
+        if let Some(current_pos) = hunk_indices
+            .iter()
+            .position(|&i| i == self.hunk_selected_index)
+        {
+            if current_pos > 0 {
+                self.hunk_selected_index = hunk_indices[current_pos - 1];
+            }
+        } else {
+            // 現在位置が hunk ヘッダでない場合、前の hunk ヘッダに移動
+            if let Some(&prev) = hunk_indices
+                .iter()
+                .rev()
+                .find(|&&i| i < self.hunk_selected_index)
+            {
+                self.hunk_selected_index = prev;
+            }
+        }
+    }
+
+    /// 選択されている hunk をステージする
+    ///
+    /// `git apply --cached` を使用してパッチを適用する。
+    ///
+    /// # Errors
+    /// - Git コマンドの実行に失敗した場合
+    pub fn stage_selected_hunk(&mut self) -> Result<()> {
+        // 選択位置から対応する hunk を特定
+        if let Some((file_path, hunk)) = self.get_selected_hunk() {
+            let patch = generate_patch(&file_path, &hunk);
+
+            // git apply --cached で hunk をステージ
+            match self.git.execute_with_stdin(&["apply", "--cached"], &patch) {
+                Ok(_) => {
+                    self.set_status_message("Hunk staged successfully");
+                    // ステータスを更新して hunk を再読み込み
+                    self.refresh_status()?;
+                    // diff を再取得して表示を更新（元の diff モードを維持）
+                    let path = self.hunk_target_path.clone();
+                    if let Some(ref path) = path {
+                        let path_str = path.to_string_lossy().to_string();
+                        let diff_output = if self.hunk_is_cached {
+                            self.git.execute(&["diff", "--cached", &path_str])?
+                        } else {
+                            self.git.execute(&["diff", &path_str])?
+                        };
+                        if diff_output.is_empty() {
+                            // もう diff がない場合は hunk モードを終了
+                            self.cancel_hunk_mode();
+                            return Ok(());
+                        }
+                        self.hunk_file_diffs = parse_diff_hunks(&diff_output);
+                        if self.hunk_file_diffs.is_empty() {
+                            self.cancel_hunk_mode();
+                            return Ok(());
+                        }
+                        // 選択インデックスを調整
+                        let hunk_indices = self.get_hunk_header_indices();
+                        if !hunk_indices.is_empty() {
+                            self.hunk_selected_index = hunk_indices[0.min(hunk_indices.len() - 1)];
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.set_status_message(&format!("Failed to stage hunk: {}", e));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// フラット化されたリストの中で hunk ヘッダ行のインデックスを返す
+    fn get_hunk_header_indices(&self) -> Vec<usize> {
+        let mut indices = Vec::new();
+        let mut flat_index = 0;
+
+        for file_diff in &self.hunk_file_diffs {
+            // ファイルヘッダ行
+            flat_index += 1;
+
+            for hunk in &file_diff.hunks {
+                // hunk ヘッダ行
+                indices.push(flat_index);
+                flat_index += 1;
+
+                // hunk の中身行
+                flat_index += hunk.lines.len();
+            }
+        }
+
+        indices
+    }
+
+    /// 選択されている hunk を取得する（ファイルパスとクローン）
+    fn get_selected_hunk(&self) -> Option<(String, crate::domain::Hunk)> {
+        let mut flat_index = 0;
+
+        for file_diff in &self.hunk_file_diffs {
+            flat_index += 1; // ファイルヘッダ
+
+            for hunk in &file_diff.hunks {
+                if flat_index == self.hunk_selected_index {
+                    return Some((file_diff.file_path.clone(), hunk.clone()));
+                }
+                flat_index += 1; // hunk ヘッダ
+                flat_index += hunk.lines.len(); // hunk 行数
+            }
+        }
+
+        None
+    }
+
+    // --- リモート操作メソッド ---
+
+    /// Push の確認ダイアログを表示する
+    pub fn show_push_confirm(&mut self) {
+        self.confirm_dialog = ConfirmDialog::Push;
+    }
+
+    /// Pull の確認ダイアログを表示する
+    pub fn show_pull_confirm(&mut self) {
+        // 未コミットの変更があるかチェック
+        let has_changes = self
+            .status_cache
+            .iter()
+            .any(|f| f.worktree != StatusKind::Unmodified || f.index != StatusKind::Unmodified);
+        if has_changes {
+            self.set_status_message(
+                "Cannot pull: uncommitted changes exist. Stash or commit first.",
+            );
+            return;
+        }
+        self.confirm_dialog = ConfirmDialog::Pull;
+    }
+
+    /// Push を実行する
+    ///
+    /// # Errors
+    /// - Git コマンドの実行に失敗した場合
+    pub fn execute_push(&mut self) -> Result<()> {
+        if !matches!(self.confirm_dialog, ConfirmDialog::Push) {
+            return Ok(());
+        }
+        self.confirm_dialog = ConfirmDialog::None;
+
+        match self.git.execute(&["push"]) {
+            Ok(_) => {
+                self.set_status_message("Pushed successfully");
+            }
+            Err(e) => {
+                self.set_status_message(&format!("Push failed: {}", e));
+            }
+        }
+        Ok(())
+    }
+
+    /// Pull を実行する
+    ///
+    /// # Errors
+    /// - Git コマンドの実行に失敗した場合
+    pub fn execute_pull(&mut self) -> Result<()> {
+        if !matches!(self.confirm_dialog, ConfirmDialog::Pull) {
+            return Ok(());
+        }
+        self.confirm_dialog = ConfirmDialog::None;
+
+        match self.git.execute(&["pull"]) {
+            Ok(_) => {
+                self.set_status_message("Pulled successfully");
+                // Pull 後にステータスとログを更新
+                self.refresh_status()?;
+            }
+            Err(e) => {
+                self.set_status_message(&format!("Pull failed: {}", e));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// パスでノードを探して不変参照を返す
+///
+/// パスの前方一致を使って探索を枝刈りし、ターゲットが含まれ得ないサブツリーをスキップする。
+fn find_node_by_path<'a>(node: &'a TreeNode, path: &std::path::Path) -> Option<&'a TreeNode> {
+    if node.path == path {
+        return Some(node);
+    }
+
+    if let Some(children) = &node.children {
+        for child in children {
+            if child.path == path {
+                return Some(child);
+            }
+            if child.kind == NodeKind::Directory && path.starts_with(&child.path) {
+                if let Some(found) = find_node_by_path(child, path) {
+                    return Some(found);
+                }
+            }
+        }
+    }
+
+    None
 }
 
 /// パスでノードを探して可変参照を返す
+///
+/// パスの前方一致を使って探索を枝刈りし、ターゲットが含まれ得ないサブツリーをスキップする。
 fn find_node_by_path_mut<'a>(
     node: &'a mut TreeNode,
     path: &std::path::Path,
@@ -1298,8 +1777,16 @@ fn find_node_by_path_mut<'a>(
 
     if let Some(children) = &mut node.children {
         for child in children {
-            if let Some(found) = find_node_by_path_mut(child, path) {
-                return Some(found);
+            // ターゲットパスが子のパスで始まるか、子のパスがターゲットと一致する場合のみ探索
+            // ファイルノードは path が一致する場合のみ、ディレクトリノードは path が
+            // ターゲットの祖先である場合のみ再帰する
+            if child.path == path {
+                return Some(child);
+            }
+            if child.kind == NodeKind::Directory && path.starts_with(&child.path) {
+                if let Some(found) = find_node_by_path_mut(child, path) {
+                    return Some(found);
+                }
             }
         }
     }
