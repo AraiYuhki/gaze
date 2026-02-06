@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-02-06
+
+### Added
+
+- **Hunk View 改善: 行単位ステージング + Visual モード**
+  - `j`/`k` で全行をナビゲート可能に（従来は hunk ヘッダ間のみ）
+  - コンテンツ行（`+` or `-`）上で `s` → その1行だけをステージ
+  - hunk ヘッダ上で `s` → hunk 全体をステージ（従来動作を維持）
+  - `v` キーで Visual モード開始、`j`/`k` で範囲を拡大、`s` で選択範囲をステージ
+  - Visual モード中に `Esc` → Visual 解除のみ（hunk モード継続）
+  - 別 hunk に跨がる選択はエラーメッセージで拒否
+  - Context 行のみの選択はメッセージ表示で拒否
+  - ヘルプ画面に Hunk Staging セクションを追加
+
 ## [0.8.0] - 2026-02-06
 
 ### Changed
