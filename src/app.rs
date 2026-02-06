@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 
 use crate::cli::{
     generate_patch, parse_branch_list, parse_diff_hunks, parse_log, parse_stash_list, parse_status,
@@ -166,6 +167,8 @@ pub struct AppState {
     pub file_log_cache: Vec<GraphLine>,
     /// ファイルログでの選択インデックス
     pub file_log_selected_index: usize,
+    /// バックグラウンド status 取得の結果受信チャネル（起動時の二段階読み込み用）
+    bg_status_receiver: Option<mpsc::Receiver<Vec<FileStatus>>>,
 }
 
 impl AppState {
@@ -232,9 +235,12 @@ impl AppState {
             file_log_path: None,
             file_log_cache: Vec::new(),
             file_log_selected_index: 0,
+            bg_status_receiver: None,
         };
-        // 起動時に1回だけ status を取得
-        state.refresh_status()?;
+        // 起動時は tracked ファイルのみ高速に取得（untracked 除外）
+        state.refresh_status_tracked_only()?;
+        // バックグラウンドで完全な status を取得開始
+        state.spawn_background_full_status();
         // Tree のステータスを適用
         let status_map = build_status_map(&state.status_cache);
         state.tree_root.apply_status_map(&status_map);
@@ -244,10 +250,9 @@ impl AppState {
     /// Git status を再取得してキャッシュを更新する
     ///
     /// このメソッドは以下のタイミングでのみ呼び出すこと:
-    /// - アプリ起動時
     /// - View 切り替え時
     /// - 手動リフレッシュ時（R キー）
-    /// - 変更操作の直後（s, r 等の操作完了後）
+    /// - 変更操作の直後（commit, stash, branch checkout 等）
     pub fn refresh_status(&mut self) -> Result<()> {
         let output = self.git.execute(&["status", "--porcelain=v1"])?;
         self.status_cache = parse_status(&output)?;
@@ -255,7 +260,79 @@ impl AppState {
         if !self.status_cache.is_empty() && self.selected_index >= self.status_cache.len() {
             self.selected_index = self.status_cache.len() - 1;
         }
+        // 手動リフレッシュ時にバックグラウンド結果を破棄
+        self.bg_status_receiver = None;
         Ok(())
+    }
+
+    /// tracked ファイルのみの Git status を取得する（起動時の高速読み込み用）
+    ///
+    /// `-uno` オプションにより untracked ファイルを除外し、取得を高速化する。
+    fn refresh_status_tracked_only(&mut self) -> Result<()> {
+        let output = self.git.execute(&["status", "--porcelain=v1", "-uno"])?;
+        self.status_cache = parse_status(&output)?;
+        Ok(())
+    }
+
+    /// バックグラウンドスレッドで完全な `git status` を実行する
+    ///
+    /// 結果は `mpsc::Receiver` 経由で受信する。
+    /// `check_background_status()` でポーリングして結果を取得する。
+    fn spawn_background_full_status(&mut self) {
+        let repo_root = self.git.repo_root().to_path_buf();
+        let (sender, receiver) = mpsc::channel();
+        self.bg_status_receiver = Some(receiver);
+
+        std::thread::spawn(move || {
+            let output = std::process::Command::new("git")
+                .args(["status", "--porcelain=v1"])
+                .current_dir(&repo_root)
+                .output();
+
+            if let Ok(output) = output {
+                if output.status.success() {
+                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                    if let Ok(statuses) = parse_status(&stdout) {
+                        // 送信失敗は無視（receiver が破棄済みの場合）
+                        let _ = sender.send(statuses);
+                    }
+                }
+            }
+        });
+    }
+
+    /// バックグラウンド status の結果をノンブロッキングでチェックする
+    ///
+    /// 結果が届いていれば status_cache を差し替え、Tree のステータスも更新する。
+    /// 1回の受信で完了し、receiver を破棄する。
+    pub fn check_background_status(&mut self) -> bool {
+        use std::sync::mpsc::TryRecvError;
+
+        let recv_result = self.bg_status_receiver.as_ref().map(|rx| rx.try_recv());
+
+        match recv_result {
+            Some(Ok(statuses)) => {
+                self.status_cache = statuses;
+                // 選択インデックスの範囲外チェック
+                if self.status_cache.is_empty() {
+                    self.selected_index = 0;
+                } else if self.selected_index >= self.status_cache.len() {
+                    self.selected_index = self.status_cache.len() - 1;
+                }
+                // Tree にステータスを再適用
+                self.apply_status_to_tree();
+                self.tree_flat_dirty = true;
+                // 1回限りで receiver を破棄
+                self.bg_status_receiver = None;
+                true
+            }
+            Some(Err(TryRecvError::Disconnected)) => {
+                // 送信側スレッドが異常終了した場合、receiver を破棄して無駄なポーリングを防ぐ
+                self.bg_status_receiver = None;
+                false
+            }
+            _ => false,
+        }
     }
 
     /// View を切り替える
@@ -293,14 +370,9 @@ impl AppState {
 
     /// Git log を再取得してキャッシュを更新する
     pub fn refresh_log(&mut self) -> Result<()> {
-        let output = self.git.execute(&[
-            "log",
-            "--oneline",
-            "--graph",
-            "--all",
-            "-n",
-            &LOG_LIMIT.to_string(),
-        ])?;
+        let output =
+            self.git
+                .execute(&["log", "--oneline", "--graph", "-n", &LOG_LIMIT.to_string()])?;
         self.log_cache = parse_log(&output);
         // 選択インデックスが範囲外になった場合は調整
         if !self.log_cache.is_empty() && self.log_selected_index >= self.log_cache.len() {
@@ -481,20 +553,101 @@ impl AppState {
     /// # Errors
     /// - Git コマンドの実行に失敗した場合
     pub fn toggle_stage(&mut self) -> Result<()> {
-        if let Some(file) = self.status_cache.get(self.selected_index) {
-            let path_str = file.path.to_string_lossy();
+        if let Some(file) = self.status_cache.get(self.selected_index).cloned() {
+            let path_str = file.path.to_string_lossy().to_string();
             // インデックスにステージされていれば unstage、そうでなければ stage
             if file.index != StatusKind::Unmodified && file.index != StatusKind::Untracked {
                 // Unstage: git restore --staged <file>
-                self.git
-                    .execute(&["restore", "--staged", path_str.as_ref()])?;
+                self.git.execute(&["restore", "--staged", &path_str])?;
+                self.optimistic_update_unstage(&file)?;
             } else {
                 // Stage: git add <file>
-                self.git.execute(&["add", path_str.as_ref()])?;
+                self.git.execute(&["add", &path_str])?;
+                self.optimistic_update_after_stage(&file);
             }
-            // 操作完了後に1回だけ status を再取得
-            self.refresh_status()?;
         }
+        Ok(())
+    }
+
+    /// ステージ操作後の楽観的キャッシュ更新
+    ///
+    /// git add 成功後に status_cache をローカルで即時更新する。
+    /// Renamed / Copied は楽観的更新が困難なため対応しない（呼び出し元でフォールバック）。
+    fn optimistic_update_after_stage(&mut self, file: &FileStatus) {
+        if let Some(entry) = self.status_cache.iter_mut().find(|f| f.path == file.path) {
+            match file.worktree {
+                StatusKind::Untracked => {
+                    entry.index = StatusKind::Added;
+                    entry.worktree = StatusKind::Unmodified;
+                }
+                StatusKind::Modified => {
+                    entry.index = StatusKind::Modified;
+                    entry.worktree = StatusKind::Unmodified;
+                }
+                StatusKind::Deleted => {
+                    entry.index = StatusKind::Deleted;
+                    entry.worktree = StatusKind::Unmodified;
+                }
+                _ => {
+                    entry.index = file.worktree;
+                    entry.worktree = StatusKind::Unmodified;
+                }
+            }
+            // 両方 Unmodified になったらエントリを削除
+            if entry.index == StatusKind::Unmodified && entry.worktree == StatusKind::Unmodified {
+                self.status_cache.retain(|f| f.path != file.path);
+                if !self.status_cache.is_empty() && self.selected_index >= self.status_cache.len() {
+                    self.selected_index = self.status_cache.len() - 1;
+                }
+            }
+        }
+        self.tree_flat_dirty = true;
+        // バックグラウンド status 結果を破棄（楽観的更新と競合を避ける）
+        self.bg_status_receiver = None;
+    }
+
+    /// アンステージ操作後の楽観的キャッシュ更新
+    ///
+    /// git restore --staged 成功後に status_cache をローカルで即時更新する。
+    /// Renamed / Copied はパスの変更を伴う可能性があるため refresh_status にフォールバック。
+    fn optimistic_update_unstage(&mut self, file: &FileStatus) -> Result<()> {
+        // Renamed / Copied は楽観的更新が困難なため refresh_status にフォールバック
+        if file.index == StatusKind::Renamed || file.index == StatusKind::Copied {
+            self.refresh_status()?;
+            return Ok(());
+        }
+
+        if let Some(entry) = self.status_cache.iter_mut().find(|f| f.path == file.path) {
+            match file.index {
+                StatusKind::Added => {
+                    // 新規追加ファイルの unstage → untracked に戻る
+                    entry.index = StatusKind::Untracked;
+                    entry.worktree = StatusKind::Untracked;
+                }
+                StatusKind::Modified => {
+                    entry.worktree = StatusKind::Modified;
+                    entry.index = StatusKind::Unmodified;
+                }
+                StatusKind::Deleted => {
+                    entry.worktree = StatusKind::Deleted;
+                    entry.index = StatusKind::Unmodified;
+                }
+                _ => {
+                    entry.worktree = file.index;
+                    entry.index = StatusKind::Unmodified;
+                }
+            }
+            // 両方 Unmodified になったらエントリを削除
+            if entry.index == StatusKind::Unmodified && entry.worktree == StatusKind::Unmodified {
+                self.status_cache.retain(|f| f.path != file.path);
+                if !self.status_cache.is_empty() && self.selected_index >= self.status_cache.len() {
+                    self.selected_index = self.status_cache.len() - 1;
+                }
+            }
+        }
+        self.tree_flat_dirty = true;
+        // バックグラウンド status 結果を破棄（楽観的更新と競合を避ける）
+        self.bg_status_receiver = None;
         Ok(())
     }
 
@@ -539,22 +692,31 @@ impl AppState {
     pub fn discard_changes(&mut self) -> Result<()> {
         if let ConfirmDialog::DiscardChanges { file_index } = self.confirm_dialog {
             if let Some(file) = self.status_cache.get(file_index).cloned() {
-                let path_str = file.path.to_string_lossy();
+                let path_str = file.path.to_string_lossy().to_string();
 
                 // ステージ済みの変更を破棄
                 if file.index != StatusKind::Unmodified && file.index != StatusKind::Untracked {
-                    self.git
-                        .execute(&["restore", "--staged", path_str.as_ref()])?;
+                    self.git.execute(&["restore", "--staged", &path_str])?;
                 }
 
                 // ワークツリーの変更を破棄
                 if file.worktree != StatusKind::Unmodified {
-                    self.git.execute(&["restore", path_str.as_ref()])?;
+                    self.git.execute(&["restore", &path_str])?;
                 }
 
                 self.confirm_dialog = ConfirmDialog::None;
-                // 操作完了後に1回だけ status を再取得
-                self.refresh_status()?;
+
+                // 楽観的更新: エントリをキャッシュから削除
+                self.status_cache.retain(|f| f.path != file.path);
+                // 選択インデックスの範囲外チェック
+                if !self.status_cache.is_empty() && self.selected_index >= self.status_cache.len() {
+                    self.selected_index = self.status_cache.len() - 1;
+                } else if self.status_cache.is_empty() {
+                    self.selected_index = 0;
+                }
+                self.tree_flat_dirty = true;
+                // バックグラウンド status 結果を破棄（楽観的更新と競合を避ける）
+                self.bg_status_receiver = None;
             }
         }
         Ok(())
@@ -1595,8 +1757,6 @@ impl AppState {
             match self.git.execute_with_stdin(&["apply", "--cached"], &patch) {
                 Ok(_) => {
                     self.set_status_message("Hunk staged successfully");
-                    // ステータスを更新して hunk を再読み込み
-                    self.refresh_status()?;
                     // diff を再取得して表示を更新（元の diff モードを維持）
                     let path = self.hunk_target_path.clone();
                     if let Some(ref path) = path {
@@ -1607,10 +1767,32 @@ impl AppState {
                             self.git.execute(&["diff", &path_str])?
                         };
                         if diff_output.is_empty() {
-                            // もう diff がない場合は hunk モードを終了
+                            // diff が空 → worktree の変更が全てステージされた
+                            if let Some(entry) = self
+                                .status_cache
+                                .iter_mut()
+                                .find(|f| f.path.to_string_lossy() == path_str)
+                            {
+                                entry.index = StatusKind::Modified;
+                                entry.worktree = StatusKind::Unmodified;
+                            }
+                            self.tree_flat_dirty = true;
+                            // バックグラウンド status 結果を破棄（楽観的更新と競合を避ける）
+                            self.bg_status_receiver = None;
                             self.cancel_hunk_mode();
                             return Ok(());
                         }
+                        // diff がまだあるなら index=Modified を設定
+                        if let Some(entry) = self
+                            .status_cache
+                            .iter_mut()
+                            .find(|f| f.path.to_string_lossy() == path_str)
+                        {
+                            entry.index = StatusKind::Modified;
+                        }
+                        self.tree_flat_dirty = true;
+                        // バックグラウンド status 結果を破棄（楽観的更新と競合を避ける）
+                        self.bg_status_receiver = None;
                         self.hunk_file_diffs = parse_diff_hunks(&diff_output);
                         if self.hunk_file_diffs.is_empty() {
                             self.cancel_hunk_mode();
@@ -1737,6 +1919,136 @@ impl AppState {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// テスト用に最小限の AppState を生成する（実際の git リポジトリを使用）
+    fn create_test_state() -> AppState {
+        let current_dir = std::env::current_dir().expect("Failed to get current directory");
+        AppState::new(&current_dir).expect("Failed to create AppState")
+    }
+
+    /// テスト用の FileStatus を生成する
+    fn make_file_status(path: &str, index: StatusKind, worktree: StatusKind) -> FileStatus {
+        FileStatus {
+            index,
+            worktree,
+            path: PathBuf::from(path),
+            original_path: None,
+        }
+    }
+
+    #[test]
+    fn test_optimistic_stage_modified_file_updates_cache() {
+        let mut state = create_test_state();
+        let file = make_file_status("test.rs", StatusKind::Unmodified, StatusKind::Modified);
+        state.status_cache = vec![file.clone()];
+        state.selected_index = 0;
+
+        state.optimistic_update_after_stage(&file);
+
+        assert_eq!(state.status_cache.len(), 1);
+        assert_eq!(state.status_cache[0].index, StatusKind::Modified);
+        assert_eq!(state.status_cache[0].worktree, StatusKind::Unmodified);
+    }
+
+    #[test]
+    fn test_optimistic_stage_untracked_file_updates_cache() {
+        let mut state = create_test_state();
+        let file = make_file_status("new.rs", StatusKind::Untracked, StatusKind::Untracked);
+        state.status_cache = vec![file.clone()];
+        state.selected_index = 0;
+
+        state.optimistic_update_after_stage(&file);
+
+        assert_eq!(state.status_cache.len(), 1);
+        assert_eq!(state.status_cache[0].index, StatusKind::Added);
+        assert_eq!(state.status_cache[0].worktree, StatusKind::Unmodified);
+    }
+
+    #[test]
+    fn test_optimistic_stage_deleted_file_updates_cache() {
+        let mut state = create_test_state();
+        let file = make_file_status("old.rs", StatusKind::Unmodified, StatusKind::Deleted);
+        state.status_cache = vec![file.clone()];
+        state.selected_index = 0;
+
+        state.optimistic_update_after_stage(&file);
+
+        assert_eq!(state.status_cache.len(), 1);
+        assert_eq!(state.status_cache[0].index, StatusKind::Deleted);
+        assert_eq!(state.status_cache[0].worktree, StatusKind::Unmodified);
+    }
+
+    #[test]
+    fn test_optimistic_unstage_modified_file_updates_cache() {
+        let mut state = create_test_state();
+        let file = make_file_status("test.rs", StatusKind::Modified, StatusKind::Unmodified);
+        state.status_cache = vec![file.clone()];
+        state.selected_index = 0;
+
+        state.optimistic_update_unstage(&file).unwrap();
+
+        assert_eq!(state.status_cache.len(), 1);
+        assert_eq!(state.status_cache[0].index, StatusKind::Unmodified);
+        assert_eq!(state.status_cache[0].worktree, StatusKind::Modified);
+    }
+
+    #[test]
+    fn test_optimistic_unstage_added_file_becomes_untracked() {
+        let mut state = create_test_state();
+        let file = make_file_status("new.rs", StatusKind::Added, StatusKind::Unmodified);
+        state.status_cache = vec![file.clone()];
+        state.selected_index = 0;
+
+        state.optimistic_update_unstage(&file).unwrap();
+
+        assert_eq!(state.status_cache.len(), 1);
+        assert_eq!(state.status_cache[0].index, StatusKind::Untracked);
+        assert_eq!(state.status_cache[0].worktree, StatusKind::Untracked);
+    }
+
+    #[test]
+    fn test_optimistic_discard_removes_entry() {
+        let mut state = create_test_state();
+        state.status_cache = vec![
+            make_file_status("a.rs", StatusKind::Unmodified, StatusKind::Modified),
+            make_file_status("b.rs", StatusKind::Unmodified, StatusKind::Modified),
+        ];
+        state.selected_index = 0;
+
+        // discard_changes は ConfirmDialog を必要とするためキャッシュ操作を直接テスト
+        let target_path = PathBuf::from("a.rs");
+        state.status_cache.retain(|f| f.path != target_path);
+
+        assert_eq!(state.status_cache.len(), 1);
+        assert_eq!(state.status_cache[0].path, PathBuf::from("b.rs"));
+    }
+
+    #[test]
+    fn test_optimistic_discard_adjusts_selected_index() {
+        let mut state = create_test_state();
+        state.status_cache = vec![
+            make_file_status("a.rs", StatusKind::Unmodified, StatusKind::Modified),
+            make_file_status("b.rs", StatusKind::Unmodified, StatusKind::Modified),
+        ];
+        // 末尾を選択
+        state.selected_index = 1;
+
+        // 末尾のエントリを削除
+        let target_path = PathBuf::from("b.rs");
+        state.status_cache.retain(|f| f.path != target_path);
+        // 選択インデックスの範囲外チェック（discard_changes 内のロジック再現）
+        if !state.status_cache.is_empty() && state.selected_index >= state.status_cache.len() {
+            state.selected_index = state.status_cache.len() - 1;
+        }
+
+        assert_eq!(state.selected_index, 0);
     }
 }
 

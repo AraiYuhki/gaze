@@ -127,7 +127,13 @@ fn run_app(
             return Ok(());
         }
 
-        // イベント処理
+        // バックグラウンド status の結果をチェック
+        state.check_background_status();
+
+        // イベント処理（100ms ポーリングでバックグラウンド結果の反映を可能にする）
+        if !event::poll(std::time::Duration::from_millis(100))? {
+            continue;
+        }
         if let Event::Key(key) = event::read()? {
             // ヘルプ画面表示中は任意のキーで閉じる
             if state.show_help {
