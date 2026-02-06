@@ -2,11 +2,11 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
 use crate::cli::{
-    generate_patch, parse_branch_list, parse_diff_hunks, parse_log, parse_stash_list, parse_status,
-    GitCli,
+    generate_partial_patch, generate_patch, parse_branch_list, parse_diff_hunks, parse_log,
+    parse_stash_list, parse_status, GitCli,
 };
 use crate::domain::{
-    build_status_map, BranchEntry, FileDiff, FileStatus, GraphLine, NodeKind, StashEntry,
+    build_status_map, BranchEntry, FileDiff, FileStatus, GraphLine, HunkLine, NodeKind, StashEntry,
     StatusKind, TreeNode,
 };
 use crate::error::Result;
@@ -161,6 +161,10 @@ pub struct AppState {
     pub hunk_target_path: Option<PathBuf>,
     /// Hunk モードが --cached（ステージ済み）の diff を対象にしているか
     hunk_is_cached: bool,
+    /// Hunk Visual モードかどうか
+    pub hunk_visual_mode: bool,
+    /// Hunk Visual モードのアンカー位置（選択開始位置）
+    pub hunk_visual_anchor: usize,
     /// ファイルログ表示中のファイルパス（None の場合は通常の Log View）
     pub file_log_path: Option<std::path::PathBuf>,
     /// ファイルログのキャッシュ
@@ -232,6 +236,8 @@ impl AppState {
             hunk_selected_index: 0,
             hunk_target_path: None,
             hunk_is_cached: false,
+            hunk_visual_mode: false,
+            hunk_visual_anchor: 0,
             file_log_path: None,
             file_log_cache: Vec::new(),
             file_log_selected_index: 0,
@@ -1700,115 +1706,193 @@ impl AppState {
         self.hunk_selected_index = 0;
         self.hunk_target_path = None;
         self.hunk_is_cached = false;
+        self.hunk_visual_mode = false;
+        self.hunk_visual_anchor = 0;
     }
 
-    /// Hunk モードでの選択を下に移動（hunk ヘッダのみに移動）
+    /// Hunk モードでの選択を下に1行移動（ファイルヘッダはスキップ）
     pub fn hunk_select_next(&mut self) {
-        let hunk_indices = self.get_hunk_header_indices();
-        if let Some(current_pos) = hunk_indices
-            .iter()
-            .position(|&i| i == self.hunk_selected_index)
-        {
-            if current_pos + 1 < hunk_indices.len() {
-                self.hunk_selected_index = hunk_indices[current_pos + 1];
-            }
-        } else {
-            // 現在位置が hunk ヘッダでない場合、次の hunk ヘッダに移動
-            if let Some(&next) = hunk_indices.iter().find(|&&i| i > self.hunk_selected_index) {
-                self.hunk_selected_index = next;
-            }
+        let total = self.get_hunk_total_lines();
+        let mut next = self.hunk_selected_index + 1;
+        // ファイルヘッダ行をスキップ
+        while next < total && self.is_file_header_index(next) {
+            next += 1;
+        }
+        if next < total {
+            self.hunk_selected_index = next;
         }
     }
 
-    /// Hunk モードでの選択を上に移動（hunk ヘッダのみに移動）
+    /// Hunk モードでの選択を上に1行移動（ファイルヘッダはスキップ）
     pub fn hunk_select_previous(&mut self) {
-        let hunk_indices = self.get_hunk_header_indices();
-        if let Some(current_pos) = hunk_indices
-            .iter()
-            .position(|&i| i == self.hunk_selected_index)
-        {
-            if current_pos > 0 {
-                self.hunk_selected_index = hunk_indices[current_pos - 1];
-            }
-        } else {
-            // 現在位置が hunk ヘッダでない場合、前の hunk ヘッダに移動
-            if let Some(&prev) = hunk_indices
-                .iter()
-                .rev()
-                .find(|&&i| i < self.hunk_selected_index)
-            {
-                self.hunk_selected_index = prev;
-            }
+        if self.hunk_selected_index == 0 {
+            return;
+        }
+        let mut prev = self.hunk_selected_index - 1;
+        // ファイルヘッダ行をスキップ
+        while prev > 0 && self.is_file_header_index(prev) {
+            prev -= 1;
+        }
+        // prev==0 がファイルヘッダの場合、移動しない
+        if !self.is_file_header_index(prev) {
+            self.hunk_selected_index = prev;
         }
     }
 
-    /// 選択されている hunk をステージする
-    ///
-    /// `git apply --cached` を使用してパッチを適用する。
+    /// パッチを適用し、diff を再取得して表示を更新する
     ///
     /// # Errors
     /// - Git コマンドの実行に失敗した場合
-    pub fn stage_selected_hunk(&mut self) -> Result<()> {
-        // 選択位置から対応する hunk を特定
-        if let Some((file_path, hunk)) = self.get_selected_hunk() {
-            let patch = generate_patch(&file_path, &hunk);
-
-            // git apply --cached で hunk をステージ
-            match self.git.execute_with_stdin(&["apply", "--cached"], &patch) {
-                Ok(_) => {
-                    self.set_status_message("Hunk staged successfully");
-                    // diff を再取得して表示を更新（元の diff モードを維持）
-                    let path = self.hunk_target_path.clone();
-                    if let Some(ref path) = path {
-                        let path_str = path.to_string_lossy().to_string();
-                        let diff_output = if self.hunk_is_cached {
-                            self.git.execute(&["diff", "--cached", &path_str])?
-                        } else {
-                            self.git.execute(&["diff", &path_str])?
-                        };
-                        if diff_output.is_empty() {
-                            // diff が空 → worktree の変更が全てステージされた
-                            if let Some(entry) = self
-                                .status_cache
-                                .iter_mut()
-                                .find(|f| f.path.to_string_lossy() == path_str)
-                            {
-                                entry.index = StatusKind::Modified;
-                                entry.worktree = StatusKind::Unmodified;
-                            }
-                            self.tree_flat_dirty = true;
-                            // バックグラウンド status 結果を破棄（楽観的更新と競合を避ける）
-                            self.bg_status_receiver = None;
-                            self.cancel_hunk_mode();
-                            return Ok(());
-                        }
-                        // diff がまだあるなら index=Modified を設定
+    fn apply_hunk_patch(&mut self, patch: &str, message: &str) -> Result<()> {
+        match self.git.execute_with_stdin(&["apply", "--cached"], patch) {
+            Ok(_) => {
+                self.set_status_message(message);
+                // diff を再取得して表示を更新（元の diff モードを維持）
+                let path = self.hunk_target_path.clone();
+                if let Some(ref path) = path {
+                    let path_str = path.to_string_lossy().to_string();
+                    let diff_output = if self.hunk_is_cached {
+                        self.git.execute(&["diff", "--cached", &path_str])?
+                    } else {
+                        self.git.execute(&["diff", &path_str])?
+                    };
+                    if diff_output.is_empty() {
+                        // diff が空 → worktree の変更が全てステージされた
                         if let Some(entry) = self
                             .status_cache
                             .iter_mut()
                             .find(|f| f.path.to_string_lossy() == path_str)
                         {
                             entry.index = StatusKind::Modified;
+                            entry.worktree = StatusKind::Unmodified;
                         }
                         self.tree_flat_dirty = true;
-                        // バックグラウンド status 結果を破棄（楽観的更新と競合を避ける）
                         self.bg_status_receiver = None;
-                        self.hunk_file_diffs = parse_diff_hunks(&diff_output);
-                        if self.hunk_file_diffs.is_empty() {
-                            self.cancel_hunk_mode();
-                            return Ok(());
-                        }
-                        // 選択インデックスを調整
-                        let hunk_indices = self.get_hunk_header_indices();
-                        if !hunk_indices.is_empty() {
-                            self.hunk_selected_index = hunk_indices[0.min(hunk_indices.len() - 1)];
-                        }
+                        self.cancel_hunk_mode();
+                        return Ok(());
+                    }
+                    // diff がまだあるなら index=Modified を設定
+                    if let Some(entry) = self
+                        .status_cache
+                        .iter_mut()
+                        .find(|f| f.path.to_string_lossy() == path_str)
+                    {
+                        entry.index = StatusKind::Modified;
+                    }
+                    self.tree_flat_dirty = true;
+                    self.bg_status_receiver = None;
+                    self.hunk_file_diffs = parse_diff_hunks(&diff_output);
+                    if self.hunk_file_diffs.is_empty() {
+                        self.cancel_hunk_mode();
+                        return Ok(());
+                    }
+                    // 選択インデックスを最初の hunk ヘッダに調整
+                    let hunk_indices = self.get_hunk_header_indices();
+                    if !hunk_indices.is_empty() {
+                        self.hunk_selected_index = hunk_indices[0];
                     }
                 }
-                Err(e) => {
-                    self.set_status_message(&format!("Failed to stage hunk: {}", e));
-                }
             }
+            Err(e) => {
+                self.set_status_message(&format!("Failed to stage: {}", e));
+            }
+        }
+        Ok(())
+    }
+
+    /// 選択されている hunk / 行をステージする
+    ///
+    /// カーソル位置に応じて動作が変わる:
+    /// - hunk ヘッダ上: hunk 全体をステージ
+    /// - コンテンツ行上: その1行だけをステージ
+    ///
+    /// # Errors
+    /// - Git コマンドの実行に失敗した場合
+    pub fn stage_selected_hunk(&mut self) -> Result<()> {
+        // Visual モードの場合は別メソッドで処理
+        if self.hunk_visual_mode {
+            return self.stage_visual_selection();
+        }
+
+        let resolved = self.resolve_flat_index(self.hunk_selected_index);
+        match resolved {
+            // hunk ヘッダ上 → hunk 全体をステージ
+            Some((file_idx, hunk_idx, None)) => {
+                let file_path = self.hunk_file_diffs[file_idx].file_path.clone();
+                let hunk = self.hunk_file_diffs[file_idx].hunks[hunk_idx].clone();
+                let patch = generate_patch(&file_path, &hunk);
+                self.apply_hunk_patch(&patch, "Hunk staged successfully")?;
+            }
+            // コンテンツ行上 → 1行だけをステージ
+            Some((file_idx, hunk_idx, Some(line_idx))) => {
+                let line = &self.hunk_file_diffs[file_idx].hunks[hunk_idx].lines[line_idx];
+                // Context 行はステージ不可
+                if matches!(line, HunkLine::Context(_)) {
+                    self.set_status_message("Context line cannot be staged");
+                    return Ok(());
+                }
+                let file_path = self.hunk_file_diffs[file_idx].file_path.clone();
+                let hunk = self.hunk_file_diffs[file_idx].hunks[hunk_idx].clone();
+                let patch = generate_partial_patch(&file_path, &hunk, &[line_idx]);
+                self.apply_hunk_patch(&patch, "Line staged successfully")?;
+            }
+            // ファイルヘッダ上 → 何もしない
+            None => {}
+        }
+        Ok(())
+    }
+
+    /// Visual モードで選択された範囲をステージする
+    ///
+    /// # Errors
+    /// - Git コマンドの実行に失敗した場合
+    fn stage_visual_selection(&mut self) -> Result<()> {
+        let (range_min, range_max) = match self.hunk_visual_range() {
+            Some(range) => range,
+            None => return Ok(()),
+        };
+
+        // 範囲内のコンテンツ行を解決
+        let mut target_file_idx: Option<usize> = None;
+        let mut target_hunk_idx: Option<usize> = None;
+        let mut selected_line_indices: Vec<usize> = Vec::new();
+        let mut has_change_lines = false;
+
+        for flat_idx in range_min..=range_max {
+            if let Some((file_idx, hunk_idx, Some(line_idx))) = self.resolve_flat_index(flat_idx) {
+                // 最初のコンテンツ行から file/hunk を特定
+                if target_file_idx.is_none() {
+                    target_file_idx = Some(file_idx);
+                    target_hunk_idx = Some(hunk_idx);
+                }
+                // 別 hunk に跨がるかチェック
+                if target_file_idx != Some(file_idx) || target_hunk_idx != Some(hunk_idx) {
+                    self.hunk_visual_mode = false;
+                    self.set_status_message("Cannot stage across different hunks");
+                    return Ok(());
+                }
+                let line = &self.hunk_file_diffs[file_idx].hunks[hunk_idx].lines[line_idx];
+                if !matches!(line, HunkLine::Context(_)) {
+                    has_change_lines = true;
+                }
+                selected_line_indices.push(line_idx);
+            }
+            // hunk ヘッダやファイルヘッダはスキップ
+        }
+
+        if !has_change_lines {
+            self.hunk_visual_mode = false;
+            self.set_status_message("No changes in selection (context lines only)");
+            return Ok(());
+        }
+
+        if let (Some(fi), Some(hi)) = (target_file_idx, target_hunk_idx) {
+            let file_path = self.hunk_file_diffs[fi].file_path.clone();
+            let hunk = self.hunk_file_diffs[fi].hunks[hi].clone();
+            // Context 行はインデックスに含まれていても generate_partial_patch が正しく処理する
+            let patch = generate_partial_patch(&file_path, &hunk, &selected_line_indices);
+            self.hunk_visual_mode = false;
+            self.apply_hunk_patch(&patch, "Selection staged successfully")?;
         }
         Ok(())
     }
@@ -1835,23 +1919,74 @@ impl AppState {
         indices
     }
 
-    /// 選択されている hunk を取得する（ファイルパスとクローン）
-    fn get_selected_hunk(&self) -> Option<(String, crate::domain::Hunk)> {
-        let mut flat_index = 0;
-
+    /// フラットリストの総行数を返す
+    fn get_hunk_total_lines(&self) -> usize {
+        let mut total = 0;
         for file_diff in &self.hunk_file_diffs {
-            flat_index += 1; // ファイルヘッダ
-
+            total += 1; // ファイルヘッダ
             for hunk in &file_diff.hunks {
-                if flat_index == self.hunk_selected_index {
-                    return Some((file_diff.file_path.clone(), hunk.clone()));
-                }
-                flat_index += 1; // hunk ヘッダ
-                flat_index += hunk.lines.len(); // hunk 行数
+                total += 1; // hunk ヘッダ
+                total += hunk.lines.len();
             }
         }
+        total
+    }
 
+    /// 指定インデックスがファイルヘッダ行かどうかを判定する
+    fn is_file_header_index(&self, index: usize) -> bool {
+        let mut flat_index = 0;
+        for file_diff in &self.hunk_file_diffs {
+            if flat_index == index {
+                return true;
+            }
+            flat_index += 1; // ファイルヘッダ
+            for hunk in &file_diff.hunks {
+                flat_index += 1; // hunk ヘッダ
+                flat_index += hunk.lines.len();
+            }
+        }
+        false
+    }
+
+    /// フラットインデックスを構造的位置に解決する
+    ///
+    /// 戻り値: `Some((file_idx, hunk_idx, Option<line_idx>))`
+    /// - ファイルヘッダ → `None`
+    /// - hunk ヘッダ → `Some((file_idx, hunk_idx, None))`
+    /// - コンテンツ行 → `Some((file_idx, hunk_idx, Some(line_idx)))`
+    fn resolve_flat_index(&self, target: usize) -> Option<(usize, usize, Option<usize>)> {
+        let mut flat_index = 0;
+        for (file_idx, file_diff) in self.hunk_file_diffs.iter().enumerate() {
+            if flat_index == target {
+                return None; // ファイルヘッダ
+            }
+            flat_index += 1;
+
+            for (hunk_idx, hunk) in file_diff.hunks.iter().enumerate() {
+                if flat_index == target {
+                    return Some((file_idx, hunk_idx, None)); // hunk ヘッダ
+                }
+                flat_index += 1;
+
+                for line_idx in 0..hunk.lines.len() {
+                    if flat_index == target {
+                        return Some((file_idx, hunk_idx, Some(line_idx)));
+                    }
+                    flat_index += 1;
+                }
+            }
+        }
         None
+    }
+
+    /// Visual モードの選択範囲を返す（ソート済みの min, max）
+    pub fn hunk_visual_range(&self) -> Option<(usize, usize)> {
+        if !self.hunk_visual_mode {
+            return None;
+        }
+        let min = self.hunk_visual_anchor.min(self.hunk_selected_index);
+        let max = self.hunk_visual_anchor.max(self.hunk_selected_index);
+        Some((min, max))
     }
 
     // --- リモート操作メソッド ---

@@ -586,6 +586,67 @@ pub fn generate_patch(file_path: &str, hunk: &Hunk) -> String {
     patch
 }
 
+/// 選択した行のみを含む部分パッチを生成する
+///
+/// hunk 内の指定行インデックスのみをステージするパッチを作る。
+/// - Context 行: 常に含む
+/// - 選択された Added 行: `+` として含む
+/// - 非選択の Added 行: パッチから除外
+/// - 選択された Removed 行: `-` として含む
+/// - 非選択の Removed 行: Context 行に変換（行はまだ存在するため）
+/// - hunk ヘッダの行数を再計算する
+pub fn generate_partial_patch(
+    file_path: &str,
+    hunk: &Hunk,
+    selected_line_indices: &[usize],
+) -> String {
+    let mut patch_lines: Vec<String> = Vec::new();
+    let mut old_count: usize = 0;
+    let mut new_count: usize = 0;
+
+    for (i, line) in hunk.lines.iter().enumerate() {
+        let is_selected = selected_line_indices.contains(&i);
+        match line {
+            HunkLine::Context(s) => {
+                patch_lines.push(format!(" {}", s));
+                old_count += 1;
+                new_count += 1;
+            }
+            HunkLine::Added(s) => {
+                if is_selected {
+                    patch_lines.push(format!("+{}", s));
+                    new_count += 1;
+                }
+                // 非選択の Added 行はパッチから除外
+            }
+            HunkLine::Removed(s) => {
+                if is_selected {
+                    patch_lines.push(format!("-{}", s));
+                    old_count += 1;
+                } else {
+                    // 非選択の Removed 行は Context に変換（行はまだ存在する）
+                    patch_lines.push(format!(" {}", s));
+                    old_count += 1;
+                    new_count += 1;
+                }
+            }
+        }
+    }
+
+    let mut patch = String::new();
+    patch.push_str(&format!("--- a/{}\n", file_path));
+    patch.push_str(&format!("+++ b/{}\n", file_path));
+    patch.push_str(&format!(
+        "@@ -{},{} +{},{} @@\n",
+        hunk.old_start, old_count, hunk.new_start, new_count
+    ));
+    for pl in &patch_lines {
+        patch.push_str(pl);
+        patch.push('\n');
+    }
+    patch
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1109,5 +1170,120 @@ mod tests {
         assert_eq!(hunk.old_count, 1);
         assert_eq!(hunk.new_start, 5);
         assert_eq!(hunk.new_count, 1);
+    }
+
+    // --- generate_partial_patch テスト ---
+
+    #[test]
+    fn test_generate_partial_patch_selected_added_lines_only() {
+        // Arrange: Added 行のみ選択
+        let hunk = Hunk {
+            header: "@@ -1,3 +1,5 @@".to_string(),
+            old_start: 1,
+            old_count: 3,
+            new_start: 1,
+            new_count: 5,
+            lines: vec![
+                HunkLine::Context("line1".to_string()),
+                HunkLine::Added("new1".to_string()),
+                HunkLine::Added("new2".to_string()),
+                HunkLine::Context("line2".to_string()),
+                HunkLine::Context("line3".to_string()),
+            ],
+        };
+
+        // Act: index 1 のみ選択（"new1"）
+        let patch = generate_partial_patch("file.rs", &hunk, &[1]);
+
+        // Assert: 選択した Added 行のみ含む、非選択 Added は除外
+        assert!(patch.contains("@@ -1,3 +1,4 @@\n"));
+        assert!(patch.contains("+new1\n"));
+        assert!(!patch.contains("+new2\n"));
+        assert!(patch.contains(" line1\n"));
+        assert!(patch.contains(" line2\n"));
+        assert!(patch.contains(" line3\n"));
+    }
+
+    #[test]
+    fn test_generate_partial_patch_selected_removed_lines_only() {
+        // Arrange: Removed 行のみ選択
+        let hunk = Hunk {
+            header: "@@ -1,4 +1,2 @@".to_string(),
+            old_start: 1,
+            old_count: 4,
+            new_start: 1,
+            new_count: 2,
+            lines: vec![
+                HunkLine::Context("line1".to_string()),
+                HunkLine::Removed("old1".to_string()),
+                HunkLine::Removed("old2".to_string()),
+                HunkLine::Context("line2".to_string()),
+            ],
+        };
+
+        // Act: index 1 のみ選択（"old1" を削除としてステージ）
+        let patch = generate_partial_patch("file.rs", &hunk, &[1]);
+
+        // Assert: 選択 Removed は - のまま、非選択 Removed は Context に変換
+        assert!(patch.contains("@@ -1,4 +1,3 @@\n"));
+        assert!(patch.contains("-old1\n"));
+        assert!(patch.contains(" old2\n")); // 非選択 Removed → Context
+        assert!(patch.contains(" line1\n"));
+        assert!(patch.contains(" line2\n"));
+    }
+
+    #[test]
+    fn test_generate_partial_patch_mixed_selection() {
+        // Arrange: Added と Removed が混在
+        let hunk = Hunk {
+            header: "@@ -1,3 +1,4 @@".to_string(),
+            old_start: 1,
+            old_count: 3,
+            new_start: 1,
+            new_count: 4,
+            lines: vec![
+                HunkLine::Context("line1".to_string()),
+                HunkLine::Removed("old_line".to_string()),
+                HunkLine::Added("new_line1".to_string()),
+                HunkLine::Added("new_line2".to_string()),
+                HunkLine::Context("line3".to_string()),
+            ],
+        };
+
+        // Act: Removed(1) と Added(2) のみ選択
+        let patch = generate_partial_patch("file.rs", &hunk, &[1, 2]);
+
+        // Assert: old=3(context1 + removed + context3), new=3(context1 + added + context3)
+        assert!(patch.contains("@@ -1,3 +1,3 @@\n"));
+        assert!(patch.contains("-old_line\n"));
+        assert!(patch.contains("+new_line1\n"));
+        assert!(!patch.contains("+new_line2\n")); // 非選択 Added は除外
+    }
+
+    #[test]
+    fn test_generate_partial_patch_empty_selection_converts_removed_to_context() {
+        // Arrange: 何も選択しない場合
+        let hunk = Hunk {
+            header: "@@ -1,3 +1,4 @@".to_string(),
+            old_start: 1,
+            old_count: 3,
+            new_start: 1,
+            new_count: 4,
+            lines: vec![
+                HunkLine::Context("line1".to_string()),
+                HunkLine::Removed("old_line".to_string()),
+                HunkLine::Added("new_line".to_string()),
+                HunkLine::Context("line3".to_string()),
+            ],
+        };
+
+        // Act: 空の選択
+        let patch = generate_partial_patch("file.rs", &hunk, &[]);
+
+        // Assert: Removed は Context に、Added は除外。old=new=3
+        assert!(patch.contains("@@ -1,3 +1,3 @@\n"));
+        assert!(!patch.contains("-old_line\n"));
+        assert!(!patch.contains("+new_line\n"));
+        assert!(patch.contains(" old_line\n")); // Removed → Context
     }
 }

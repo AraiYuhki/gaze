@@ -39,6 +39,9 @@ fn render_hunk_list(f: &mut Frame, state: &AppState, area: Rect) {
         return;
     }
 
+    // Visual 選択範囲を取得
+    let visual_range = state.hunk_visual_range();
+
     // すべての hunk を行としてフラット化して表示
     let mut items: Vec<ListItem> = Vec::new();
     let mut flat_index = 0;
@@ -54,11 +57,13 @@ fn render_hunk_list(f: &mut Frame, state: &AppState, area: Rect) {
         flat_index += 1;
 
         for (hunk_idx, hunk) in file_diff.hunks.iter().enumerate() {
-            let is_selected = state.hunk_selected_index == flat_index;
+            let is_cursor = state.hunk_selected_index == flat_index;
+            let is_in_visual =
+                visual_range.is_some_and(|(min, max)| flat_index >= min && flat_index <= max);
 
             // hunk ヘッダ行
             let hunk_label = format!("  Hunk #{}: {}", hunk_idx + 1, hunk.header);
-            let header_style = if is_selected {
+            let header_style = if is_cursor {
                 Style::default()
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD)
@@ -67,8 +72,10 @@ fn render_hunk_list(f: &mut Frame, state: &AppState, area: Rect) {
             };
 
             let header_item = ListItem::new(Line::from(Span::styled(hunk_label, header_style)));
-            let header_item = if is_selected {
+            let header_item = if is_cursor {
                 header_item.style(Style::default().bg(Color::Rgb(60, 60, 80)))
+            } else if is_in_visual {
+                header_item.style(Style::default().bg(Color::Rgb(40, 40, 60)))
             } else {
                 header_item
             };
@@ -77,16 +84,29 @@ fn render_hunk_list(f: &mut Frame, state: &AppState, area: Rect) {
 
             // hunk の各行（コンテキスト表示）
             for line in &hunk.lines {
+                let is_cursor = state.hunk_selected_index == flat_index;
+                let is_in_visual =
+                    visual_range.is_some_and(|(min, max)| flat_index >= min && flat_index <= max);
+
                 let (prefix, content, color) = match line {
                     HunkLine::Context(s) => (" ", s.as_str(), Color::White),
                     HunkLine::Added(s) => ("+", s.as_str(), Color::Green),
                     HunkLine::Removed(s) => ("-", s.as_str(), Color::Red),
                 };
 
-                items.push(ListItem::new(Line::from(Span::styled(
+                let line_style = Style::default().fg(color);
+                let item = ListItem::new(Line::from(Span::styled(
                     format!("    {}{}", prefix, content),
-                    Style::default().fg(color),
-                ))));
+                    line_style,
+                )));
+                let item = if is_cursor {
+                    item.style(Style::default().fg(color).bg(Color::Rgb(60, 60, 80)))
+                } else if is_in_visual {
+                    item.style(Style::default().fg(color).bg(Color::Rgb(40, 40, 60)))
+                } else {
+                    item
+                };
+                items.push(item);
                 flat_index += 1;
             }
         }
@@ -108,10 +128,13 @@ fn render_hunk_list(f: &mut Frame, state: &AppState, area: Rect) {
 
 /// ステータスバーを描画する
 fn render_status_bar(f: &mut Frame, state: &AppState, area: Rect) {
-    let message = state
-        .status_message
-        .as_deref()
-        .unwrap_or("j/k:move s:stage hunk Esc:back q:quit");
+    let default_message = if state.hunk_visual_mode {
+        "VISUAL: j/k:extend s:stage selection v:cancel Esc:cancel"
+    } else {
+        "j/k:move s:stage v:visual Esc:back q:quit"
+    };
+
+    let message = state.status_message.as_deref().unwrap_or(default_message);
 
     let status_bar = Paragraph::new(message).style(Style::default().fg(Color::Cyan));
 

@@ -91,6 +91,16 @@ pub fn render(f: &mut Frame) {
         Line::from("  R          Refresh"),
         Line::from(""),
         Line::from(vec![Span::styled(
+            "=== Hunk Staging ===",
+            Style::default().fg(Color::Yellow),
+        )]),
+        Line::from("  j/k, ↓/↑   Navigate lines"),
+        Line::from("  s          Stage hunk/line/selection"),
+        Line::from("  v          Toggle visual mode"),
+        Line::from("  Esc        Exit visual / Exit hunk"),
+        Line::from("  q          Quit hunk mode"),
+        Line::from(""),
+        Line::from(vec![Span::styled(
             "Press any key to close",
             Style::default().fg(Color::DarkGray),
         )]),
