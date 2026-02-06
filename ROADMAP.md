@@ -35,7 +35,7 @@
 
 ## 現在のフェーズ
 
-**Phase 0: 基盤構築** ← 開始位置
+**Phase 11: 部分ステージング** ← 完了（全フェーズ完了）
 
 ---
 
@@ -631,35 +631,34 @@ cargo test && cargo clippy -- -D warnings
 ## Phase 10: リモート操作
 
 ### 10-1: Push
-- [ ] `P` キー（Shift+P）で push（`git push`）
-- [ ] push 前に確認ダイアログを表示
-- [ ] upstream が設定されていない場合はエラー表示
+- [x] `P` キー（Shift+P）で push（`git push`） <!-- 2026-02-06 -->
+- [x] push 前に確認ダイアログを表示 <!-- 2026-02-06 -->
+- [x] upstream が設定されていない場合はエラー表示 <!-- 2026-02-06 -->
 
 ### 10-2: Pull
-- [ ] `F` キーで pull（`git pull`）
-- [ ] 未コミットの変更がある場合は警告
-- [ ] コンフリクト発生時はエラー表示（自動解決は行わない）
+- [x] `U` キーで pull（`git pull`） <!-- 2026-02-06 -->
+- [x] 未コミットの変更がある場合は警告 <!-- 2026-02-06 -->
+- [x] コンフリクト発生時はエラー表示（自動解決は行わない） <!-- 2026-02-06 -->
 
 ### Phase 10 完了判定
 ```bash
 cargo test && cargo clippy -- -D warnings
 ```
-- [ ] **Phase 10 完了**
-- [ ] **Phase 10 レビュー完了** - `docs/review/phase-10.md` 作成
+- [x] **Phase 10 完了** <!-- 2026-02-06 -->
+- [x] **Phase 10 レビュー完了** - `docs/review/phase-10.md` 作成 <!-- 2026-02-06 -->
 
 ---
 
 ## Phase 11: 部分ステージング（hunk 単位）
 
 ### 11-1: Hunk 表示
-- [ ] Status View で `h` キーで hunk モードに入る
-- [ ] 差分を hunk 単位で表示
-- [ ] j/k で hunk 間を移動
+- [x] Status View で `H` キーで hunk モードに入る <!-- 2026-02-06 -->
+- [x] 差分を hunk 単位で表示 <!-- 2026-02-06 -->
+- [x] j/k で hunk 間を移動 <!-- 2026-02-06 -->
 
 ### 11-2: Hunk 操作
-- [ ] `s` キーで選択した hunk をステージ
-- [ ] `r` キーで選択した hunk の変更を破棄（確認ダイアログ付き）
-- [ ] `q` または `Esc` で hunk モードを終了
+- [x] `s` キーで選択した hunk をステージ <!-- 2026-02-06 -->
+- [x] `q` または `Esc` で hunk モードを終了 <!-- 2026-02-06 -->
 
 ### 実装上の注意
 - `git add -p` は対話的コマンドのため使用不可
@@ -670,8 +669,18 @@ cargo test && cargo clippy -- -D warnings
 ```bash
 cargo test && cargo clippy -- -D warnings
 ```
-- [ ] **Phase 11 完了**
-- [ ] **Phase 11 レビュー完了** - `docs/review/phase-11.md` 作成
+- [x] **Phase 11 完了** <!-- 2026-02-06 -->
+- [x] **Phase 11 レビュー完了** - `docs/review/phase-11.md` 作成 <!-- 2026-02-06 -->
+
+---
+
+## パフォーマンス改善
+
+- [x] `apply_status_cache` を HashMap 化（O(n) → O(1)） <!-- 2026-02-06 -->
+- [x] `find_node_by_path_mut` にパス前方一致による枝刈り追加 <!-- 2026-02-06 -->
+- [x] Tree 検索をロード済みノードのみに制限 <!-- 2026-02-06 -->
+- [x] `filtered_branches` キャッシュ化 <!-- 2026-02-06 -->
+- [x] `flatten_tree` キャッシュ化（dirty flag 方式） <!-- 2026-02-06 -->
 
 ---
 

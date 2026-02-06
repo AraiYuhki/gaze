@@ -42,6 +42,9 @@ pub fn render(f: &mut Frame) {
         Line::from("  r          Discard changes"),
         Line::from("  c          Commit"),
         Line::from("  C          Amend commit"),
+        Line::from("  H          Hunk staging"),
+        Line::from("  P          Push"),
+        Line::from("  U          Pull"),
         Line::from("  R          Refresh"),
         Line::from(""),
         Line::from(vec![Span::styled(

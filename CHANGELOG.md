@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-02-06
+
+### Added
+
+- **リモート操作（Phase 10）**
+  - `P` キーで push（確認ダイアログ付き）
+  - `U` キーで pull（確認ダイアログ付き）
+  - 未コミットの変更がある場合は pull を拒否しメッセージ表示
+
+- **Hunk ステージング（Phase 11）**
+  - Status View で `H` キーで hunk モードに入る
+  - diff を hunk 単位で色分け表示（追加=緑、削除=赤、コンテキスト=白）
+  - `j`/`k` で hunk 間を移動
+  - `s` キーで選択した hunk をステージ（`git apply --cached` 使用）
+  - `Esc`/`q` で hunk モード終了
+  - 長い diff でも選択位置に自動スクロール
+
+### Changed
+
+- **パフォーマンス改善**
+  - `apply_status_cache` を HashMap ベースに変更（O(n) → O(1) ルックアップ）
+  - `find_node_by_path_mut` にパス前方一致による枝刈りを追加
+  - Tree 検索をロード済みノードのみに制限（大規模リポジトリでの検索高速化）
+  - Branch View のフィルタ結果をキャッシュ化
+  - Tree View のフラット化結果をキャッシュ化（dirty flag による遅延再構築）
+
 ## [0.6.0] - 2026-02-05
 
 ### Added
