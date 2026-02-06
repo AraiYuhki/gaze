@@ -1205,6 +1205,39 @@ self.pager.display(&diff).unwrap();
 
 ---
 
+## ブランチ運用ルール
+
+### ブランチ構成
+| ブランチ | 用途 |
+|----------|------|
+| `master` | リリースブランチ（ユーザーに配布するコードのみ） |
+| `develop` | 開発ブランチ（全ファイルを保持） |
+
+### master ブランチに含めないファイル
+以下のファイル/ディレクトリは **develop 専用** であり、master にマージする際は除外すること:
+
+- `CLAUDE.md` — 実装指示書（開発用）
+- `ROADMAP.md` — 進捗管理（開発用）
+- `docs/` — レビューログ等の開発ドキュメント
+
+### master へのマージ手順
+```bash
+# develop から master にマージ
+git checkout master
+git merge develop
+
+# 開発専用ファイルを master から削除してコミット
+git rm -r --cached CLAUDE.md ROADMAP.md docs/
+git commit -m "chore: 開発専用ファイルを除外"
+
+# タグを打ってプッシュ
+git tag vX.Y.Z
+git push origin master --tags
+git checkout develop
+```
+
+---
+
 ## トラブルシューティング
 
 ### コンパイルエラーが解消しない
