@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-02-06
+
+### Changed
+
+- **大規模リポジトリ向けパフォーマンス改善（Phase 12）**
+  - stage / unstage / discard 操作で楽観的キャッシュ更新を導入（`git status` 再実行を省略）
+  - `git log` から `--all` を除去（全ブランチのトラバースを回避）
+  - 起動時の二段階 status 読み込み（tracked のみを即座に表示、untracked はバックグラウンドで取得）
+
+### Performance
+
+- stage / unstage / discard: ~4.2s → ほぼ 0s（大規模リポジトリ）
+- Log View 切替: ~3.2s → ~80ms（大規模リポジトリ）
+- 起動体感: ~4.2s → ~1.2s（大規模リポジトリ）
+
 ## [0.7.0] - 2026-02-06
 
 ### Added

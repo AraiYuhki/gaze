@@ -684,12 +684,64 @@ cargo test && cargo clippy -- -D warnings
 
 ---
 
+## Phase 12: 大規模リポジトリ向けパフォーマンス改善
+
+> **背景**: 367K ファイル / 276 ブランチ規模のリポジトリで計測した結果、
+> `git status` に約 4.2 秒、`git log --graph --all` に約 3.2 秒を要していた。
+> ステージング・Discard のたびに `git status` が再実行されるため、
+> 操作ごとに約 4 秒の UI フリーズが発生している。
+
+### 12-1: ステージング / Discard 後の楽観的キャッシュ更新
+- [x] `toggle_stage()` で `refresh_status()` の代わりにローカルキャッシュを即時更新 <!-- 2026-02-06 -->
+  - Stage (`git add`): index ← worktree の値、worktree ← Unmodified
+  - Unstage (`git restore --staged`): worktree ← index の値、index ← Unmodified
+- [x] `discard_changes()` で `refresh_status()` の代わりにエントリをキャッシュから削除 <!-- 2026-02-06 -->
+- [x] R キー（手動リフレッシュ）と View 切替時には従来通り `refresh_status()` を実行 <!-- 2026-02-06 -->
+- [x] 楽観的更新のテストを追加 <!-- 2026-02-06 -->
+
+**期待効果**: stage / unstage / discard が **~4.2s → ほぼ 0s** に
+
+### 12-2: `git log` から `--all` フラグを除去
+- [x] `refresh_log()` のデフォルトを `git log --oneline --graph -n 200` に変更 <!-- 2026-02-06 -->
+- [x] 全ブランチ表示は不要（Branch View で個別に確認可能） <!-- 2026-02-06 -->
+
+**期待効果**: Log View 切替が **~3.2s → ~80ms** に
+
+### 12-3: 起動時の二段階 status 読み込み
+- [x] 初回 status 取得を `git status --porcelain=v1 -uno`（untracked 除外）に変更 <!-- 2026-02-06 -->
+- [x] バックグラウンドスレッド (`std::thread`) で完全な `git status` を実行 <!-- 2026-02-06 -->
+- [x] 完了後にキャッシュを差し替え、Tree View のステータスも更新 <!-- 2026-02-06 -->
+
+**期待効果**: 起動体感が **~4.2s → ~1.2s** に
+
+### Phase 12 完了判定
+```bash
+cargo test && cargo clippy -- -D warnings
+```
+- [x] **Phase 12 完了** <!-- 2026-02-06 -->
+- [x] **Phase 12 レビュー完了** - `docs/review/phase-12.md` 作成 <!-- 2026-02-06 -->
+
+---
+
+## Phase 13: バックグラウンド status 更新（非同期化）
+
+> **注意**: このタスクはイベントループの設計変更を伴うため、着手前に詳細設計を行うこと。
+> 現行の同期イベントループとの整合性、チャネルポーリングのタイミング制御、
+> 描画との排他制御などを事前に検討する必要がある。
+
+- [ ] `std::thread` + `mpsc::channel` で `git status` をバックグラウンド実行
+- [ ] イベントループでチャネルをポーリングし、結果が届いたらキャッシュを差し替え
+- [ ] 操作中も UI が応答し続けるようにする
+
+**期待効果**: すべての git 操作で UI フリーズが解消
+
+---
+
 ## 延期した機能（将来）
 
 以下は現時点のスコープ外。実装しないこと。
 
 - Log の動的読み込み（スクロール時に追加取得）
-- 非同期化（tokio 導入）
 - カスタムキーバインド
 - ブランチ作成・削除
 - マージ操作
