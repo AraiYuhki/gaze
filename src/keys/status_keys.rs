@@ -36,10 +36,18 @@ pub fn handle_status_view_keys(
         }
         // ステージング
         KeyCode::Char('s') => {
-            if let Err(e) = state.toggle_stage() {
+            if let Err(e) = state.stage() {
                 state.set_status_message(&format!("Error: {}", e));
             } else {
-                state.set_status_message("Staged/Unstaged");
+                state.set_status_message("Staged");
+            }
+        }
+        // アンステージング
+        KeyCode::Char('u') => {
+            if let Err(e) = state.unstage() {
+                state.set_status_message(&format!("Error: {}", e));
+            } else {
+                state.set_status_message("Unstaged");
             }
         }
         // 差分表示

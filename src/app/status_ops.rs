@@ -37,23 +37,28 @@ impl AppState {
         self.status_cache.get(self.selected_index)
     }
 
-    /// 選択されているファイルをステージ/アンステージする
+    /// 選択されているファイルをステージする
     ///
     /// # Errors
     /// - Git コマンドの実行に失敗した場合
-    pub fn toggle_stage(&mut self) -> Result<()> {
+    pub fn stage(&mut self) -> Result<()> {
         if let Some(file) = self.status_cache.get(self.selected_index).cloned() {
             let path_str = file.path.to_string_lossy().to_string();
-            // インデックスにステージされていれば unstage、そうでなければ stage
-            if file.index != StatusKind::Unmodified && file.index != StatusKind::Untracked {
-                // Unstage: git restore --staged <file>
-                self.git.execute(&["restore", "--staged", &path_str])?;
-                self.optimistic_update_unstage(&file)?;
-            } else {
-                // Stage: git add <file>
-                self.git.execute(&["add", &path_str])?;
-                self.optimistic_update_after_stage(&file);
-            }
+            self.git.execute(&["add", &path_str])?;
+            self.optimistic_update_after_stage(&file);
+        }
+        Ok(())
+    }
+
+    /// 選択されているファイルをアンステージする
+    ///
+    /// # Errors
+    /// - Git コマンドの実行に失敗した場合
+    pub fn unstage(&mut self) -> Result<()> {
+        if let Some(file) = self.status_cache.get(self.selected_index).cloned() {
+            let path_str = file.path.to_string_lossy().to_string();
+            self.git.execute(&["restore", "--staged", &path_str])?;
+            self.optimistic_update_unstage(&file)?;
         }
         Ok(())
     }
