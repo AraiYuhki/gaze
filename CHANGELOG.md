@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-02-09
+
+### Changed
+
+- Status View: ステージング (`s`) とアンステージング (`u`) のキーを分離
+  - 従来の `s` キーによるトグル動作を廃止
+  - 一部ステージ済みファイルで意図せずアンステージされる問題を解消
+
 ## [0.9.2] - 2026-02-09
 
 ### Fixed
