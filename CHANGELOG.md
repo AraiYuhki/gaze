@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-02-09
+
+### Fixed
+
+- コミットメッセージ入力で長い行が欄外にはみ出る問題を修正（視覚的折り返しを追加）
+- 折り返し時のカーソル位置・IME プリエディット表示を正しく計算するよう修正
+
 ## [0.9.0] - 2026-02-06
 
 ### Added
