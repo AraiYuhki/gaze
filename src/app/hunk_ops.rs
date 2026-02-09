@@ -13,9 +13,12 @@ impl AppState {
         if let Some(file) = self.status_cache.get(self.selected_index).cloned() {
             let path_str = file.path.to_string_lossy().to_string();
 
-            // ステージ済みか否かで diff の取得モードを決定
-            let is_cached =
-                file.index != StatusKind::Unmodified && file.index != StatusKind::Untracked;
+            // Hunk ステージングでは未ステージの変更を対象とする。
+            // ワークツリーに変更がある場合は非 cached diff を使用し、
+            // ワークツリーが clean で index にのみ変更がある場合は cached diff を使用する。
+            let is_cached = file.worktree == StatusKind::Unmodified
+                && file.index != StatusKind::Unmodified
+                && file.index != StatusKind::Untracked;
 
             // 色なしの diff を取得（パース用）
             let diff_output = if is_cached {
@@ -91,10 +94,11 @@ impl AppState {
     /// # Errors
     /// - Git コマンドの実行に失敗した場合
     fn apply_hunk_patch(&mut self, patch: &str, message: &str) -> Result<()> {
+        let saved_index = self.hunk_selected_index;
         match self.git.execute_with_stdin(&["apply", "--cached"], patch) {
             Ok(_) => {
                 self.set_status_message(message);
-                self.refresh_hunk_diff_after_patch()?;
+                self.refresh_hunk_diff_after_patch(saved_index)?;
             }
             Err(e) => {
                 self.set_status_message(&format!("Failed to stage: {}", e));
@@ -104,7 +108,10 @@ impl AppState {
     }
 
     /// パッチ適用後に diff を再取得して hunk モードの表示を更新する
-    fn refresh_hunk_diff_after_patch(&mut self) -> Result<()> {
+    ///
+    /// `saved_index` はパッチ適用前のカーソル位置。
+    /// できるだけ元の位置に近い場所にカーソルを復帰する。
+    fn refresh_hunk_diff_after_patch(&mut self, saved_index: usize) -> Result<()> {
         let path = match self.hunk_target_path.clone() {
             Some(p) => p,
             None => return Ok(()),
@@ -130,11 +137,21 @@ impl AppState {
             return Ok(());
         }
 
-        // 選択インデックスを最初の hunk ヘッダに調整
-        let hunk_indices = self.get_hunk_header_indices();
-        if !hunk_indices.is_empty() {
-            self.hunk_selected_index = hunk_indices[0];
+        // カーソル位置を復帰する: 元の位置を基準に、有効な位置にクランプ
+        let total = self.get_hunk_total_lines();
+        let mut restored = saved_index.min(total.saturating_sub(1));
+        // ファイルヘッダ上に着地した場合は次の有効行に進める
+        while restored < total && self.is_file_header_index(restored) {
+            restored += 1;
         }
+        // 末尾を超えた場合は戻して探す
+        if restored >= total {
+            restored = saved_index.min(total.saturating_sub(1));
+            while restored > 0 && self.is_file_header_index(restored) {
+                restored -= 1;
+            }
+        }
+        self.hunk_selected_index = restored;
         Ok(())
     }
 
@@ -249,28 +266,6 @@ impl AppState {
             self.apply_hunk_patch(&patch, "Selection staged successfully")?;
         }
         Ok(())
-    }
-
-    /// フラット化されたリストの中で hunk ヘッダ行のインデックスを返す
-    fn get_hunk_header_indices(&self) -> Vec<usize> {
-        let mut indices = Vec::new();
-        let mut flat_index = 0;
-
-        for file_diff in &self.hunk_file_diffs {
-            // ファイルヘッダ行
-            flat_index += 1;
-
-            for hunk in &file_diff.hunks {
-                // hunk ヘッダ行
-                indices.push(flat_index);
-                flat_index += 1;
-
-                // hunk の中身行
-                flat_index += hunk.lines.len();
-            }
-        }
-
-        indices
     }
 
     /// フラットリストの総行数を返す
