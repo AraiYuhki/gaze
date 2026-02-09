@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-02-09
+
+### Fixed
+
+- Hunk View: staged + unstaged の両変更があるファイルで Visual モードのステージングが失敗する問題を修正
+- Hunk View: ステージング後にカーソルが先頭に戻る問題を修正（元の位置付近に復帰するよう改善）
+
+### Changed
+
+- 大規模ファイルをモジュール分割しコードの可読性を改善
+  - `app.rs`（2,242行）→ `app/` ディレクトリ（10ファイル）
+  - `cli/parser.rs`（1,289行）→ `cli/parser/` ディレクトリ（5ファイル）
+  - `main.rs`（986行）→ `keys/` モジュール抽出（314行 + 8ファイル）
+  - 重複コード排除: ページャ表示・確認ダイアログの共通化
+
 ## [0.9.1] - 2026-02-09
 
 ### Fixed
