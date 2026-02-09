@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
     Frame,
 };
 use unicode_width::UnicodeWidthChar;
@@ -174,23 +174,23 @@ fn render_message_input(f: &mut Frame, state: &AppState, area: Rect) {
         })
         .collect();
 
-    let paragraph = Paragraph::new(lines).block(block);
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
     f.render_widget(paragraph, area);
 
     // メッセージ入力にフォーカスしている場合、ターミナルカーソルを設定
     // これによりIMEのプリエディット（変換中文字列）が正しい位置に表示される
     if !state.commit_focus_files {
-        // カーソル位置を計算（ボーダー分 +1）
-        let cursor_x = area.x
-            + 1
-            + state.commit_message[state.commit_cursor_y]
-                .chars()
-                .take(state.commit_cursor_x)
-                .map(|c| UnicodeWidthChar::width(c).unwrap_or(1) as u16)
-                .sum::<u16>();
-        let cursor_y = area.y + 1 + state.commit_cursor_y as u16;
-
-        // ターミナルカーソルを設定
+        let inner_width = area.width.saturating_sub(2) as usize;
+        let (visual_x, visual_y) = calculate_wrapped_cursor_position(
+            &state.commit_message,
+            state.commit_cursor_x,
+            state.commit_cursor_y,
+            inner_width,
+        );
+        let cursor_x = area.x + 1 + visual_x;
+        let cursor_y = area.y + 1 + visual_y;
         f.set_cursor_position((cursor_x, cursor_y));
     }
 }
@@ -226,4 +226,60 @@ fn render_status_bar(f: &mut Frame, state: &AppState, area: Rect) {
         .block(block);
 
     f.render_widget(paragraph, area);
+}
+
+/// 折り返しを考慮したカーソルのビジュアル座標を計算する
+///
+/// 各論理行の表示幅が `inner_width` を超える場合に折り返しが発生し、
+/// カーソルのビジュアル Y 座標が増加する。
+/// 戻り値: (visual_x, visual_y) — ボーダーを除いた inner 領域内の相対座標
+fn calculate_wrapped_cursor_position(
+    commit_message: &[String],
+    cursor_x: usize,
+    cursor_y: usize,
+    inner_width: usize,
+) -> (u16, u16) {
+    if inner_width == 0 {
+        return (0, cursor_y as u16);
+    }
+
+    // カーソル行より前の論理行が占めるビジュアル行数を合算
+    let mut visual_y: u16 = 0;
+    for line_content in commit_message.iter().take(cursor_y) {
+        let mut col: usize = 0;
+        let mut visual_lines: u16 = 1;
+        for c in line_content.chars() {
+            let char_width = UnicodeWidthChar::width(c).unwrap_or(1);
+            if col + char_width > inner_width {
+                visual_lines += 1;
+                col = char_width;
+            } else {
+                col += char_width;
+            }
+        }
+        visual_y += visual_lines;
+    }
+
+    // カーソル行内でのカーソルのビジュアル位置を計算
+    let mut cursor_col: usize = 0;
+    for (i, c) in commit_message[cursor_y].chars().enumerate() {
+        if i >= cursor_x {
+            break;
+        }
+        let char_width = UnicodeWidthChar::width(c).unwrap_or(1);
+        if cursor_col + char_width > inner_width {
+            visual_y += 1;
+            cursor_col = char_width;
+        } else {
+            cursor_col += char_width;
+        }
+    }
+
+    // カーソル位置がちょうど行幅に達している場合は次のビジュアル行に折り返す
+    if cursor_col >= inner_width {
+        visual_y += 1;
+        cursor_col = 0;
+    }
+
+    (cursor_col as u16, visual_y)
 }
