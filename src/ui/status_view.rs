@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame,
 };
 
@@ -83,7 +83,8 @@ fn render_file_list(f: &mut Frame, state: &AppState, area: Rect) {
 
     let list = List::new(items).block(Block::default().borders(Borders::ALL).title(" Status (1) "));
 
-    f.render_widget(list, area);
+    let mut list_state = ListState::default().with_selected(Some(state.selected_index));
+    f.render_stateful_widget(list, area, &mut list_state);
 }
 
 /// ステータスバーを描画する

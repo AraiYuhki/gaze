@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-02-13
+
+### Added
+
+- Status View: ファイル一覧のスクロール機能を追加
+  - 変更ファイルが画面に収まらない場合でも選択行に追従してスクロール
+
 ## [0.9.3] - 2026-02-09
 
 ### Changed
