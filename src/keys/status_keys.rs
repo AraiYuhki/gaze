@@ -42,12 +42,28 @@ pub fn handle_status_view_keys(
                 state.set_status_message("Staged");
             }
         }
+        // 全ステージング
+        KeyCode::Char('S') => {
+            if let Err(e) = state.stage_all() {
+                state.set_status_message(&format!("Error: {}", e));
+            } else {
+                state.set_status_message("Staged all");
+            }
+        }
         // アンステージング
         KeyCode::Char('u') => {
             if let Err(e) = state.unstage() {
                 state.set_status_message(&format!("Error: {}", e));
             } else {
                 state.set_status_message("Unstaged");
+            }
+        }
+        // 全アンステージング
+        KeyCode::Char('W') => {
+            if let Err(e) = state.unstage_all() {
+                state.set_status_message(&format!("Error: {}", e));
+            } else {
+                state.set_status_message("Unstaged all");
             }
         }
         // 差分表示
@@ -81,20 +97,16 @@ pub fn handle_status_view_keys(
         }
         // Amend（確認ダイアログを表示）
         KeyCode::Char('C') => {
+            state.confirm_selected_yes = false;
             state.confirm_dialog = ConfirmDialog::Amend;
-            state.set_status_message("Amend last commit? (y/n)");
         }
         // Push（確認ダイアログを表示）
         KeyCode::Char('P') => {
             state.show_push_confirm();
-            state.set_status_message("Push to remote? (y/n)");
         }
         // Pull（確認ダイアログを表示）
         KeyCode::Char('U') => {
             state.show_pull_confirm();
-            if matches!(state.confirm_dialog, ConfirmDialog::Pull) {
-                state.set_status_message("Pull from remote? (y/n)");
-            }
         }
         // Hunk ステージングモード
         KeyCode::Char('H') => {

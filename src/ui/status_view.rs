@@ -25,13 +25,16 @@ pub fn render(f: &mut Frame, state: &AppState) {
     // 確認ダイアログがあれば描画
     match &state.confirm_dialog {
         ConfirmDialog::DiscardChanges { file_index } => {
-            render_confirm_dialog(f, state, *file_index);
+            render_discard_confirm_dialog(f, state, *file_index);
         }
         ConfirmDialog::Push => {
-            render_push_pull_dialog(f, "Push to remote?");
+            render_push_pull_dialog(f, state, "Push to remote?");
         }
         ConfirmDialog::Pull => {
-            render_push_pull_dialog(f, "Pull from remote?");
+            render_push_pull_dialog(f, state, "Pull from remote?");
+        }
+        ConfirmDialog::Amend => {
+            render_amend_dialog(f, state);
         }
         _ => {}
     }
@@ -90,7 +93,7 @@ fn render_file_list(f: &mut Frame, state: &AppState, area: Rect) {
 /// ステータスバーを描画する
 fn render_status_bar(f: &mut Frame, state: &AppState, area: Rect) {
     let message = state.status_message.as_deref().unwrap_or(
-        "j/k:move s:stage u:unstage d:diff H:hunk r:discard c:commit P:push U:pull q:quit",
+        "j/k:move s/S:stage u/W:unstage d:diff H:hunk r:discard c:commit P:push U:pull q:quit",
     );
 
     let status_bar = Paragraph::new(message).style(Style::default().fg(Color::Cyan));
@@ -99,70 +102,39 @@ fn render_status_bar(f: &mut Frame, state: &AppState, area: Rect) {
 }
 
 /// 確認ダイアログを描画する
-fn render_confirm_dialog(f: &mut Frame, state: &AppState, file_index: usize) {
-    let area = centered_rect(60, 20, f.area());
-
+fn render_discard_confirm_dialog(f: &mut Frame, state: &AppState, file_index: usize) {
     let file_path = state
         .status_cache
         .get(file_index)
         .map(|f| f.path.display().to_string())
         .unwrap_or_default();
 
-    let text = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            "Discard changes?",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from(format!("File: {}", file_path)),
-        Line::from(""),
-        Line::from("Press 'y' to confirm, 'n' to cancel"),
-    ];
-
-    let dialog = Paragraph::new(text)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Confirm ")
-                .style(Style::default().bg(Color::Black)),
-        )
-        .style(Style::default().bg(Color::Black));
-
-    // 背景を塗りつぶしてからダイアログを描画
-    f.render_widget(ratatui::widgets::Clear, area);
-    f.render_widget(dialog, area);
+    let area = super::centered_rect(50, 20, f.area());
+    super::render_confirm_dialog(
+        f,
+        "Discard changes?",
+        &format!("File: {}", file_path),
+        state.confirm_selected_yes,
+        area,
+    );
 }
 
 /// Push/Pull 確認ダイアログを描画する
-fn render_push_pull_dialog(f: &mut Frame, message: &str) {
-    let area = centered_rect(50, 20, f.area());
+fn render_push_pull_dialog(f: &mut Frame, state: &AppState, message: &str) {
+    let area = super::centered_rect(50, 20, f.area());
+    super::render_confirm_dialog(f, message, "", state.confirm_selected_yes, area);
+}
 
-    let text = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            message,
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from("Press 'y' to confirm, 'n' to cancel"),
-    ];
-
-    let dialog = Paragraph::new(text)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Confirm ")
-                .style(Style::default().bg(Color::Black)),
-        )
-        .style(Style::default().bg(Color::Black));
-
-    f.render_widget(ratatui::widgets::Clear, area);
-    f.render_widget(dialog, area);
+/// Amend 確認ダイアログを描画する
+fn render_amend_dialog(f: &mut Frame, state: &AppState) {
+    let area = super::centered_rect(50, 20, f.area());
+    super::render_confirm_dialog(
+        f,
+        "Amend last commit?",
+        "",
+        state.confirm_selected_yes,
+        area,
+    );
 }
 
 /// StatusKind を表示文字と色に変換する
@@ -177,25 +149,4 @@ fn status_to_char_and_color(kind: StatusKind) -> (char, Color) {
         StatusKind::Ignored => ('!', Color::DarkGray),
         StatusKind::Unmodified => (' ', Color::White),
     }
-}
-
-/// 中央揃えの矩形を計算する
-fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(area);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
 }

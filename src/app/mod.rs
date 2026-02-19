@@ -98,6 +98,8 @@ pub struct AppState {
     pub status_cache: Vec<FileStatus>,
     /// 確認ダイアログの状態
     pub confirm_dialog: ConfirmDialog,
+    /// 確認ダイアログで Yes が選択されているか（false = No 選択）
+    pub confirm_selected_yes: bool,
     /// ステータスバーに表示するメッセージ
     pub status_message: Option<String>,
     /// アプリケーション終了フラグ
@@ -209,6 +211,7 @@ impl AppState {
             selected_index: 0,
             status_cache: Vec::new(),
             confirm_dialog: ConfirmDialog::None,
+            confirm_selected_yes: false,
             status_message: None,
             should_quit: false,
             tree_root,
@@ -373,10 +376,10 @@ impl AppState {
 
     /// チェックアウトの確認ダイアログを表示する
     pub fn show_checkout_confirm(&mut self) {
-        if let Some(hash) = self.selected_commit_hash() {
-            self.confirm_dialog = ConfirmDialog::Checkout {
-                commit_hash: hash.to_string(),
-            };
+        let hash = self.selected_commit_hash().map(|h| h.to_string());
+        if let Some(hash) = hash {
+            self.confirm_selected_yes = false;
+            self.confirm_dialog = ConfirmDialog::Checkout { commit_hash: hash };
         }
     }
 
@@ -399,6 +402,7 @@ impl AppState {
     /// 確認ダイアログをキャンセルする
     pub fn cancel_confirm(&mut self) {
         self.confirm_dialog = ConfirmDialog::None;
+        self.confirm_selected_yes = false;
     }
 
     /// ステータスメッセージを設定する
@@ -422,7 +426,7 @@ impl AppState {
 
         std::thread::spawn(move || {
             let output = std::process::Command::new("git")
-                .args(["status", "--porcelain=v1"])
+                .args(["status", "--porcelain=v1", "-uall"])
                 .current_dir(&repo_root)
                 .output();
 

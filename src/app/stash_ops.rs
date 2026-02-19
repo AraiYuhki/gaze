@@ -94,6 +94,7 @@ impl AppState {
     /// Stash 削除の確認ダイアログを表示
     pub fn show_stash_drop_confirm(&mut self) {
         if self.selected_stash().is_some() {
+            self.confirm_selected_yes = false;
             self.confirm_dialog = ConfirmDialog::DropStash {
                 stash_index: self.stash_selected_index,
             };

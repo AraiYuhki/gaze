@@ -97,15 +97,16 @@ impl AppState {
 
     /// ブランチチェックアウトの確認ダイアログを表示
     pub fn show_branch_checkout_confirm(&mut self) {
-        if let Some(branch) = self.selected_branch() {
-            // 現在のブランチの場合は何もしない
-            if branch.is_current {
+        let branch_info = self
+            .selected_branch()
+            .map(|b| (b.is_current, b.name.clone()));
+        if let Some((is_current, name)) = branch_info {
+            if is_current {
                 self.set_status_message("Already on this branch");
                 return;
             }
-            self.confirm_dialog = ConfirmDialog::CheckoutBranch {
-                branch_name: branch.name.clone(),
-            };
+            self.confirm_selected_yes = false;
+            self.confirm_dialog = ConfirmDialog::CheckoutBranch { branch_name: name };
         }
     }
 
