@@ -90,7 +90,7 @@ fn render_file_list(f: &mut Frame, state: &AppState, area: Rect) {
 /// ステータスバーを描画する
 fn render_status_bar(f: &mut Frame, state: &AppState, area: Rect) {
     let message = state.status_message.as_deref().unwrap_or(
-        "j/k:move s:stage u:unstage d:diff H:hunk r:discard c:commit P:push U:pull q:quit",
+        "j/k:move s/S:stage u/W:unstage d:diff H:hunk r:discard c:commit P:push U:pull q:quit",
     );
 
     let status_bar = Paragraph::new(message).style(Style::default().fg(Color::Cyan));

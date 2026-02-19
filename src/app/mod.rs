@@ -422,7 +422,7 @@ impl AppState {
 
         std::thread::spawn(move || {
             let output = std::process::Command::new("git")
-                .args(["status", "--porcelain=v1"])
+                .args(["status", "--porcelain=v1", "-uall"])
                 .current_dir(&repo_root)
                 .output();
 

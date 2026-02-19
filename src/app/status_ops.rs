@@ -12,7 +12,7 @@ impl AppState {
     /// - 手動リフレッシュ時（R キー）
     /// - 変更操作の直後（commit, stash, branch checkout 等）
     pub fn refresh_status(&mut self) -> Result<()> {
-        let output = self.git.execute(&["status", "--porcelain=v1"])?;
+        let output = self.git.execute(&["status", "--porcelain=v1", "-uall"])?;
         self.status_cache = parse_status(&output)?;
         // 選択インデックスが範囲外になった場合は調整
         if !self.status_cache.is_empty() && self.selected_index >= self.status_cache.len() {
@@ -47,6 +47,26 @@ impl AppState {
             self.git.execute(&["add", &path_str])?;
             self.optimistic_update_after_stage(&file);
         }
+        Ok(())
+    }
+
+    /// すべての変更をステージする
+    ///
+    /// # Errors
+    /// - Git コマンドの実行に失敗した場合
+    pub fn stage_all(&mut self) -> Result<()> {
+        self.git.execute(&["add", "-A"])?;
+        self.refresh_status()?;
+        Ok(())
+    }
+
+    /// すべてのステージ済み変更をアンステージする
+    ///
+    /// # Errors
+    /// - Git コマンドの実行に失敗した場合
+    pub fn unstage_all(&mut self) -> Result<()> {
+        self.git.execute(&["reset", "HEAD"])?;
+        self.refresh_status()?;
         Ok(())
     }
 

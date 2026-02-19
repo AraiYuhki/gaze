@@ -42,12 +42,28 @@ pub fn handle_status_view_keys(
                 state.set_status_message("Staged");
             }
         }
+        // 全ステージング
+        KeyCode::Char('S') => {
+            if let Err(e) = state.stage_all() {
+                state.set_status_message(&format!("Error: {}", e));
+            } else {
+                state.set_status_message("Staged all");
+            }
+        }
         // アンステージング
         KeyCode::Char('u') => {
             if let Err(e) = state.unstage() {
                 state.set_status_message(&format!("Error: {}", e));
             } else {
                 state.set_status_message("Unstaged");
+            }
+        }
+        // 全アンステージング
+        KeyCode::Char('W') => {
+            if let Err(e) = state.unstage_all() {
+                state.set_status_message(&format!("Error: {}", e));
+            } else {
+                state.set_status_message("Unstaged all");
             }
         }
         // 差分表示
