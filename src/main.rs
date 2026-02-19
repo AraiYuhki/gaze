@@ -263,8 +263,12 @@ fn handle_confirm_dialog(state: &mut AppState, code: KeyCode) -> bool {
                 state.cancel_confirm();
             }
         }
-        // キャンセル
-        KeyCode::Esc => {
+        // y キーで即実行
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
+            execute_confirm_action(state);
+        }
+        // n キーまたは Esc でキャンセル
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
             state.cancel_confirm();
         }
         _ => {}

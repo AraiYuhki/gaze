@@ -64,7 +64,7 @@ pub fn render_confirm_dialog(
     ]));
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "  ←/→: select  Enter: confirm  Esc: cancel",
+        "  ←/→: select  Enter/y: confirm  Esc/n: cancel",
         Style::default().fg(Color::DarkGray),
     )));
 

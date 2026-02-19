@@ -7,12 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.9.5] - 2026-02-19
+## [0.9.6] - 2026-02-19
 
 ### Changed
 
 - 確認ダイアログを Yes/No 選択式 UI に変更
-  - ←/→ キーで選択、Enter で決定、Esc でキャンセル
+  - ←/→ キーで選択、Enter/y で決定、Esc/n でキャンセル
   - デフォルトは No（安全側）で Yes は緑、No は赤でハイライト表示
   - 全ダイアログ (Discard, Amend, Push, Pull, Stash Drop, Branch Checkout) を統一
 
@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - 新規作成フォルダ内のファイルが Status View に表示されない問題を修正
   - `git status` に `-uall` オプションを追加し個別ファイルを表示
+- コミットメッセージ入力の二重カーソルと IME 位置ずれを修正
+- 確認ダイアログで y/n キーが機能しない問題を修正
 
 ### Added
 

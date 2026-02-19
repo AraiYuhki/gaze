@@ -137,41 +137,11 @@ fn render_message_input(f: &mut Frame, state: &AppState, area: Rect) {
         .border_style(Style::default().fg(border_color));
 
     // メッセージを行ごとに表示
+    // カーソルは set_cursor_position によるターミナルカーソルのみ使用
     let lines: Vec<Line> = state
         .commit_message
         .iter()
-        .enumerate()
-        .map(|(line_idx, line_content)| {
-            if !state.commit_focus_files && line_idx == state.commit_cursor_y {
-                // カーソル行: カーソル位置を示す
-                let chars: Vec<char> = line_content.chars().collect();
-                let mut spans = Vec::new();
-
-                for (char_idx, c) in chars.iter().enumerate() {
-                    if char_idx == state.commit_cursor_x {
-                        // カーソル位置
-                        spans.push(Span::styled(
-                            c.to_string(),
-                            Style::default().bg(Color::White).fg(Color::Black),
-                        ));
-                    } else {
-                        spans.push(Span::raw(c.to_string()));
-                    }
-                }
-
-                // カーソルが行末にある場合
-                if state.commit_cursor_x >= chars.len() {
-                    spans.push(Span::styled(
-                        " ",
-                        Style::default().bg(Color::White).fg(Color::Black),
-                    ));
-                }
-
-                Line::from(spans)
-            } else {
-                Line::from(line_content.as_str())
-            }
-        })
+        .map(|line_content| Line::from(line_content.as_str()))
         .collect();
 
     let paragraph = Paragraph::new(lines)
