@@ -6,6 +6,7 @@ use super::{AppState, ConfirmDialog};
 impl AppState {
     /// Push の確認ダイアログを表示する
     pub fn show_push_confirm(&mut self) {
+        self.confirm_selected_yes = false;
         self.confirm_dialog = ConfirmDialog::Push;
     }
 
@@ -22,6 +23,7 @@ impl AppState {
             );
             return;
         }
+        self.confirm_selected_yes = false;
         self.confirm_dialog = ConfirmDialog::Pull;
     }
 

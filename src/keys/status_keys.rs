@@ -97,20 +97,16 @@ pub fn handle_status_view_keys(
         }
         // Amend（確認ダイアログを表示）
         KeyCode::Char('C') => {
+            state.confirm_selected_yes = false;
             state.confirm_dialog = ConfirmDialog::Amend;
-            state.set_status_message("Amend last commit? (y/n)");
         }
         // Push（確認ダイアログを表示）
         KeyCode::Char('P') => {
             state.show_push_confirm();
-            state.set_status_message("Push to remote? (y/n)");
         }
         // Pull（確認ダイアログを表示）
         KeyCode::Char('U') => {
             state.show_pull_confirm();
-            if matches!(state.confirm_dialog, ConfirmDialog::Pull) {
-                state.set_status_message("Pull from remote? (y/n)");
-            }
         }
         // Hunk ステージングモード
         KeyCode::Char('H') => {

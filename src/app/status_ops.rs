@@ -188,6 +188,7 @@ impl AppState {
     /// 変更破棄の確認ダイアログを表示する
     pub fn show_discard_confirm(&mut self) {
         if self.selected_file().is_some() {
+            self.confirm_selected_yes = false;
             self.confirm_dialog = ConfirmDialog::DiscardChanges {
                 file_index: self.selected_index,
             };

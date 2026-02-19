@@ -24,7 +24,7 @@ pub fn render(f: &mut Frame, state: &AppState) {
 
     // 確認ダイアログがあれば描画
     if let ConfirmDialog::CheckoutBranch { branch_name } = &state.confirm_dialog {
-        render_checkout_confirm_dialog(f, branch_name);
+        render_checkout_confirm_dialog(f, state, branch_name);
     }
 
     // 検索入力モードの場合
@@ -160,34 +160,15 @@ fn render_search_input(f: &mut Frame, state: &AppState) {
 }
 
 /// ブランチチェックアウト確認ダイアログを描画
-fn render_checkout_confirm_dialog(f: &mut Frame, branch_name: &str) {
-    let area = centered_rect(50, 25, f.area());
-
-    let text = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            "Switch branch?",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from(format!("Branch: {}", branch_name)),
-        Line::from(""),
-        Line::from("Press 'y' to confirm, 'n' to cancel"),
-    ];
-
-    let dialog = Paragraph::new(text)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Confirm ")
-                .style(Style::default().bg(Color::Black)),
-        )
-        .style(Style::default().bg(Color::Black));
-
-    f.render_widget(ratatui::widgets::Clear, area);
-    f.render_widget(dialog, area);
+fn render_checkout_confirm_dialog(f: &mut Frame, state: &AppState, branch_name: &str) {
+    let area = super::centered_rect(50, 25, f.area());
+    super::render_confirm_dialog(
+        f,
+        "Switch branch?",
+        &format!("Branch: {}", branch_name),
+        state.confirm_selected_yes,
+        area,
+    );
 }
 
 /// 検索入力用の矩形を計算（画面下部）
@@ -198,25 +179,4 @@ fn search_input_rect(area: Rect) -> Rect {
     let y = area.height.saturating_sub(height + 2);
 
     Rect::new(x, y, width, height)
-}
-
-/// 中央揃えの矩形を計算する
-fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(area);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
 }

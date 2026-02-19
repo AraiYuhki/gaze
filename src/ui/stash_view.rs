@@ -110,44 +110,25 @@ fn render_status_bar(f: &mut Frame, state: &AppState, area: Rect) {
 
 /// Stash 削除確認ダイアログを描画
 fn render_drop_confirm_dialog(f: &mut Frame, state: &AppState, stash_index: usize) {
-    let area = centered_rect(50, 25, f.area());
-
     let stash_name = state
         .stash_cache
         .get(stash_index)
         .map(|s| format!("stash@{{{}}}", s.index))
         .unwrap_or_default();
 
-    let text = vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            "Drop stash?",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from(format!("Stash: {}", stash_name)),
-        Line::from(""),
-        Line::from("Press 'y' to confirm, 'n' to cancel"),
-    ];
-
-    let dialog = Paragraph::new(text)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Confirm ")
-                .style(Style::default().bg(Color::Black)),
-        )
-        .style(Style::default().bg(Color::Black));
-
-    f.render_widget(ratatui::widgets::Clear, area);
-    f.render_widget(dialog, area);
+    let area = super::centered_rect(50, 25, f.area());
+    super::render_confirm_dialog(
+        f,
+        "Drop stash?",
+        &format!("Stash: {}", stash_name),
+        state.confirm_selected_yes,
+        area,
+    );
 }
 
 /// Stash メッセージ入力ダイアログを描画
 fn render_stash_input_dialog(f: &mut Frame, state: &AppState) {
-    let area = centered_rect(60, 30, f.area());
+    let area = super::centered_rect(60, 30, f.area());
 
     let title = match state.stash_input_mode {
         StashInputMode::Push => " Stash Message (optional) ",
@@ -182,25 +163,4 @@ fn render_stash_input_dialog(f: &mut Frame, state: &AppState) {
 
     f.render_widget(ratatui::widgets::Clear, area);
     f.render_widget(dialog, area);
-}
-
-/// 中央揃えの矩形を計算する
-fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(area);
-
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
 }

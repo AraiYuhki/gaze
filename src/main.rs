@@ -248,54 +248,71 @@ fn handle_confirm_dialog(state: &mut AppState, code: KeyCode) -> bool {
     }
 
     match code {
-        KeyCode::Char('y') | KeyCode::Char('Y') => {
-            // Amend は特殊処理（cancel_confirm → start_amend_mode）
-            if matches!(state.confirm_dialog, ConfirmDialog::Amend) {
+        // 選択切り替え
+        KeyCode::Left | KeyCode::Char('h') => {
+            state.confirm_selected_yes = true;
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            state.confirm_selected_yes = false;
+        }
+        // 決定
+        KeyCode::Enter => {
+            if state.confirm_selected_yes {
+                execute_confirm_action(state);
+            } else {
                 state.cancel_confirm();
-                if let Err(e) = state.start_amend_mode() {
-                    state.set_status_message(&format!("Error: {}", e));
-                }
-                return true;
-            }
-
-            // Checkout は成功メッセージにハッシュを含める
-            let success_message =
-                if let ConfirmDialog::Checkout { ref commit_hash } = state.confirm_dialog {
-                    Some(format!("Checked out {}", commit_hash))
-                } else {
-                    None
-                };
-
-            let result = match &state.confirm_dialog {
-                ConfirmDialog::DiscardChanges { .. } => {
-                    state.discard_changes().map(|_| "Changes discarded")
-                }
-                ConfirmDialog::Checkout { .. } => state.checkout_commit().map(|_| ""),
-                ConfirmDialog::DropStash { .. } => state.stash_drop().map(|_| ""),
-                ConfirmDialog::CheckoutBranch { .. } => state.checkout_branch().map(|_| ""),
-                ConfirmDialog::Push => state.execute_push().map(|_| ""),
-                ConfirmDialog::Pull => state.execute_pull().map(|_| ""),
-                ConfirmDialog::Amend | ConfirmDialog::None => unreachable!(),
-            };
-
-            match result {
-                Err(e) => state.set_status_message(&format!("Error: {}", e)),
-                Ok(msg) => {
-                    if let Some(custom_msg) = success_message {
-                        state.set_status_message(&custom_msg);
-                    } else if !msg.is_empty() {
-                        state.set_status_message(msg);
-                    }
-                    // 各メソッド内でメッセージを設定済みの場合もある
-                }
             }
         }
-        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+        // キャンセル
+        KeyCode::Esc => {
             state.cancel_confirm();
         }
         _ => {}
     }
     true
+}
+
+/// 確認ダイアログで Yes が選択された場合のアクション実行
+fn execute_confirm_action(state: &mut AppState) {
+    // Amend は特殊処理（cancel_confirm → start_amend_mode）
+    if matches!(state.confirm_dialog, ConfirmDialog::Amend) {
+        state.cancel_confirm();
+        if let Err(e) = state.start_amend_mode() {
+            state.set_status_message(&format!("Error: {}", e));
+        }
+        return;
+    }
+
+    // Checkout は成功メッセージにハッシュを含める
+    let success_message = if let ConfirmDialog::Checkout { ref commit_hash } = state.confirm_dialog
+    {
+        Some(format!("Checked out {}", commit_hash))
+    } else {
+        None
+    };
+
+    let result = match &state.confirm_dialog {
+        ConfirmDialog::DiscardChanges { .. } => {
+            state.discard_changes().map(|_| "Changes discarded")
+        }
+        ConfirmDialog::Checkout { .. } => state.checkout_commit().map(|_| ""),
+        ConfirmDialog::DropStash { .. } => state.stash_drop().map(|_| ""),
+        ConfirmDialog::CheckoutBranch { .. } => state.checkout_branch().map(|_| ""),
+        ConfirmDialog::Push => state.execute_push().map(|_| ""),
+        ConfirmDialog::Pull => state.execute_pull().map(|_| ""),
+        ConfirmDialog::Amend | ConfirmDialog::None => unreachable!(),
+    };
+
+    match result {
+        Err(e) => state.set_status_message(&format!("Error: {}", e)),
+        Ok(msg) => {
+            if let Some(custom_msg) = success_message {
+                state.set_status_message(&custom_msg);
+            } else if !msg.is_empty() {
+                state.set_status_message(msg);
+            }
+        }
+    }
 }
 
 /// ヘルプメッセージを表示
