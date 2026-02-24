@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::AppState;
+use crate::app::{AppState, TreeFlatItem};
 use crate::domain::{NodeKind, StatusKind, TreeNode};
 use crate::filter::DisplayFilter;
 
@@ -42,22 +42,18 @@ pub fn render(f: &mut Frame, state: &AppState) {
 }
 
 /// ツリーを描画する
+///
+/// `state.tree_flat_items()` を使用することで毎フレームの `flatten_tree` 再計算を回避する。
+/// キャッシュは `state.ensure_tree_flat_cache()` でイベントループ側が事前に最新化しておく。
 fn render_tree(f: &mut Frame, state: &AppState, area: Rect) {
-    let flat_nodes = flatten_tree(&state.tree_root, &state.display_filter, 0);
-
-    let items: Vec<ListItem> = flat_nodes
+    let items: Vec<ListItem> = state
+        .tree_flat_items()
         .iter()
         .enumerate()
-        .map(|(index, (node, depth))| {
+        .map(|(index, item)| {
             let is_selected = index == state.tree_selected_index;
-            let is_match = state.tree_search_matches.contains(&node.path);
-            render_tree_item(
-                node,
-                *depth,
-                is_selected,
-                is_match,
-                &state.tree_search_query,
-            )
+            let is_match = state.tree_search_matches.contains(&item.path);
+            render_tree_item(item, is_selected, is_match, &state.tree_search_query)
         })
         .collect();
 
@@ -88,19 +84,18 @@ fn render_tree(f: &mut Frame, state: &AppState, area: Rect) {
 
 /// ツリーアイテムを描画する
 fn render_tree_item(
-    node: &TreeNode,
-    depth: usize,
+    item: &TreeFlatItem,
     is_selected: bool,
     is_match: bool,
     search_query: &str,
 ) -> ListItem<'static> {
     // インデント
-    let indent = "  ".repeat(depth);
+    let indent = "  ".repeat(item.depth);
 
     // 展開アイコン
-    let icon = match &node.kind {
+    let icon = match &item.kind {
         NodeKind::Directory => {
-            if node.expanded {
+            if item.expanded {
                 "▼ "
             } else {
                 "▶ "
@@ -110,7 +105,7 @@ fn render_tree_item(
     };
 
     // Git ステータスインジケータ
-    let (status_indicator, status_color) = match node.git_status {
+    let (status_indicator, status_color) = match item.git_status {
         Some(StatusKind::Modified) => ("[M]", Color::Yellow),
         Some(StatusKind::Added) => ("[A]", Color::Green),
         Some(StatusKind::Deleted) => ("[D]", Color::Red),
@@ -120,7 +115,7 @@ fn render_tree_item(
     };
 
     // 名前のスタイル
-    let base_color = if node.kind == NodeKind::Directory {
+    let base_color = if item.kind == NodeKind::Directory {
         Color::Blue
     } else {
         Color::White
@@ -141,9 +136,9 @@ fn render_tree_item(
 
     // 検索クエリがある場合はマッチ部分をハイライト
     let name_spans = if is_match && !search_query.is_empty() && !is_selected {
-        highlight_match(&node.name, search_query, name_style, base_color)
+        highlight_match(&item.name, search_query, name_style, base_color)
     } else {
-        vec![Span::styled(node.name.clone(), name_style)]
+        vec![Span::styled(item.name.clone(), name_style)]
     };
 
     let mut spans = vec![

@@ -17,16 +17,34 @@ impl AppState {
     }
 
     /// フラットキャッシュを必要に応じて再構築する
-    fn ensure_tree_flat_cache(&mut self) {
+    ///
+    /// ツリー構造・フィルタ・ステータスが変化した後に `tree_flat_dirty = true` を立て、
+    /// このメソッドを呼ぶことでナビゲーションとレンダリング両方に使えるキャッシュを更新する。
+    pub fn ensure_tree_flat_cache(&mut self) {
         if !self.tree_flat_dirty {
             return;
         }
         let flat = tree_view::flatten_tree(&self.tree_root, &self.display_filter, 0);
         self.tree_flat_cache = flat
             .into_iter()
-            .map(|(node, depth)| (node.path.clone(), depth))
+            .map(|(node, depth)| crate::app::TreeFlatItem {
+                path: node.path.clone(),
+                depth,
+                name: node.name.clone(),
+                kind: node.kind.clone(),
+                expanded: node.expanded,
+                git_status: node.git_status,
+            })
             .collect();
         self.tree_flat_dirty = false;
+    }
+
+    /// キャッシュ済みフラットツリーへの参照を返す
+    ///
+    /// `ensure_tree_flat_cache` で事前に最新化しておくこと。
+    /// UI レンダリング側はこの参照を使うことで毎フレームの `flatten_tree` 再計算を回避する。
+    pub fn tree_flat_items(&self) -> &[crate::app::TreeFlatItem] {
+        &self.tree_flat_cache
     }
 
     /// キャッシュ済みのフラットツリーの長さを取得する
@@ -38,7 +56,9 @@ impl AppState {
     /// キャッシュ済みのフラットツリーから指定インデックスのパスを取得する
     pub fn get_tree_flat_path(&mut self, index: usize) -> Option<PathBuf> {
         self.ensure_tree_flat_cache();
-        self.tree_flat_cache.get(index).map(|(p, _)| p.clone())
+        self.tree_flat_cache
+            .get(index)
+            .map(|item| item.path.clone())
     }
 
     // --- Tree View 用メソッド ---
@@ -46,8 +66,9 @@ impl AppState {
     /// 選択されているツリーノードを展開/折りたたみする
     #[allow(dead_code)] // TODO(Phase 2): toggle 機能は Enter キーでのみ使用予定
     pub fn toggle_tree_node(&mut self) {
-        // borrow checker 対策: status_map を先に構築
+        // borrow checker 対策: status_map と repo_root を先に構築
         let status_map = build_status_map(&self.status_cache);
+        let repo_root = self.git.repo_root().to_path_buf();
 
         if let Some(node) = self.get_selected_tree_node_mut() {
             if node.kind == NodeKind::Directory {
@@ -59,7 +80,7 @@ impl AppState {
                     if node.children.is_none() {
                         // 遅延ロード
                         let _ = node.load_children();
-                        node.apply_status_map(&status_map);
+                        node.apply_status_map(&status_map, &repo_root);
                     }
                     node.expanded = true;
                 }
@@ -70,15 +91,16 @@ impl AppState {
 
     /// 選択されているツリーノードを展開する
     pub fn expand_tree_node(&mut self) {
-        // borrow checker 対策: status_map を先に構築
+        // borrow checker 対策: status_map と repo_root を先に構築
         let status_map = build_status_map(&self.status_cache);
+        let repo_root = self.git.repo_root().to_path_buf();
 
         if let Some(node) = self.get_selected_tree_node_mut() {
             if node.kind == NodeKind::Directory && !node.expanded {
                 if node.children.is_none() {
                     // 遅延ロード
                     let _ = node.load_children();
-                    node.apply_status_map(&status_map);
+                    node.apply_status_map(&status_map, &repo_root);
                 }
                 node.expanded = true;
                 self.invalidate_tree_flat_cache();
@@ -222,8 +244,8 @@ impl AppState {
 
         // キャッシュを再構築してインデックスを取得
         self.ensure_tree_flat_cache();
-        for (index, (path, _)) in self.tree_flat_cache.iter().enumerate() {
-            if *path == target_path {
+        for (index, item) in self.tree_flat_cache.iter().enumerate() {
+            if item.path == target_path {
                 self.tree_selected_index = index;
                 break;
             }
@@ -248,6 +270,7 @@ impl AppState {
 
         // HashMap を1回だけ構築（borrow checker 対策も兼ねる）
         let status_map = build_status_map(&self.status_cache);
+        let repo_root = self.git.repo_root().to_path_buf();
 
         let mut changed = false;
         for ancestor_path in ancestors {
@@ -255,7 +278,7 @@ impl AppState {
                 if node.kind == NodeKind::Directory && !node.expanded {
                     if node.children.is_none() {
                         let _ = node.load_children();
-                        node.apply_status_map(&status_map);
+                        node.apply_status_map(&status_map, &repo_root);
                     }
                     node.expanded = true;
                     changed = true;
@@ -330,22 +353,27 @@ impl AppState {
     /// HashMap を1回だけ構築し、全ノードに対して再利用する
     pub(super) fn apply_status_to_tree(&mut self) {
         let status_map = build_status_map(&self.status_cache);
+        let repo_root = self.git.repo_root().to_path_buf();
 
         // ルートノードにステータスを適用
-        self.tree_root.apply_status_map(&status_map);
+        self.tree_root.apply_status_map(&status_map, &repo_root);
 
         // 展開されている子ノードにも再帰的に適用
-        fn apply_recursive(node: &mut TreeNode, status_map: &crate::domain::StatusMap) {
+        fn apply_recursive(
+            node: &mut TreeNode,
+            status_map: &crate::domain::StatusMap,
+            repo_root: &std::path::Path,
+        ) {
             if let Some(children) = &mut node.children {
                 for child in children {
-                    child.apply_status_map(status_map);
+                    child.apply_status_map(status_map, repo_root);
                     if child.expanded {
-                        apply_recursive(child, status_map);
+                        apply_recursive(child, status_map, repo_root);
                     }
                 }
             }
         }
-        apply_recursive(&mut self.tree_root, &status_map);
+        apply_recursive(&mut self.tree_root, &status_map, &repo_root);
     }
 
     /// 選択されているツリーノードへの可変参照を取得する
@@ -354,7 +382,7 @@ impl AppState {
         let target_path = self
             .tree_flat_cache
             .get(self.tree_selected_index)
-            .map(|(p, _)| p.clone());
+            .map(|item| item.path.clone());
 
         if let Some(path) = target_path {
             find_node_by_path_mut(&mut self.tree_root, &path)

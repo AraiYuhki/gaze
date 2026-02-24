@@ -105,6 +105,10 @@ fn run_app(
     let pager = Pager::with_command(settings.pager.command.clone());
 
     loop {
+        // Tree View のフラットキャッシュを描画前に最新化する
+        // render 関数は &AppState（不変参照）を受け取るため、ここで事前に構築しておく
+        state.ensure_tree_flat_cache();
+
         // 描画（View に応じて切り替え）
         terminal.draw(|f| {
             // Hunk モード中は Hunk 画面を表示

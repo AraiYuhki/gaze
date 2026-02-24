@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.7] - 2026-02-24
+
+### Fixed
+
+- Tree View: ステータスマッチングの誤検知を修正
+  - `tests/src/main.rs` が `src/main.rs` にマッチしてしまうサフィックス誤検知を解消
+  - `repo_root` を用いた `strip_prefix` による正確な絶対→相対パス変換に変更
+- Tree View: 毎フレーム `flatten_tree` を再計算していたパフォーマンス問題を修正
+  - `TreeFlatItem` キャッシュを導入し、ツリー構造変更時のみ再構築するよう改善
+
 ## [0.9.6] - 2026-02-19
 
 ### Changed
