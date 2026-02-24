@@ -15,7 +15,8 @@ use std::sync::mpsc;
 
 use crate::cli::{parse_log, parse_status, GitCli};
 use crate::domain::{
-    build_status_map, BranchEntry, FileDiff, FileStatus, GraphLine, StashEntry, TreeNode,
+    build_status_map, BranchEntry, FileDiff, FileStatus, GraphLine, NodeKind, StashEntry,
+    StatusKind, TreeNode,
 };
 use crate::error::Result;
 use crate::filter::DisplayFilter;
@@ -83,6 +84,26 @@ pub enum BranchInputMode {
 /// Log View で取得するコミット数
 const LOG_LIMIT: usize = 200;
 
+/// Tree View レンダリング用のフラット化済みノード情報
+///
+/// `tree_flat_cache` に格納し、描画時に `flatten_tree` を再呼び出しすることなく
+/// ナビゲーションとレンダリングの両方に利用する。
+#[derive(Debug, Clone)]
+pub struct TreeFlatItem {
+    /// ノードの絶対パス（ナビゲーション・検索マッチ判定用）
+    pub path: PathBuf,
+    /// 表示上のインデント深さ
+    pub depth: usize,
+    /// ファイル名またはディレクトリ名
+    pub name: String,
+    /// ノードの種類（ファイル or ディレクトリ）
+    pub kind: NodeKind,
+    /// ディレクトリの展開状態
+    pub expanded: bool,
+    /// Git ステータス（None = 変更なし）
+    pub git_status: Option<StatusKind>,
+}
+
 /// アプリケーション全体の状態
 pub struct AppState {
     /// Git CLI 実行インスタンス
@@ -110,9 +131,9 @@ pub struct AppState {
     pub tree_selected_index: usize,
     /// 表示フィルタ
     pub display_filter: DisplayFilter,
-    /// フラット化されたツリーのキャッシュ（パスと深さ）
+    /// フラット化されたツリーのキャッシュ（ナビゲーション・レンダリング共用）
     /// ツリー構造が変わった時に tree_flat_dirty を true にして再構築する
-    pub(super) tree_flat_cache: Vec<(PathBuf, usize)>,
+    pub(super) tree_flat_cache: Vec<TreeFlatItem>,
     /// フラットキャッシュが無効化されているか
     pub(super) tree_flat_dirty: bool,
     /// Log View のキャッシュ
@@ -253,13 +274,16 @@ impl AppState {
             file_log_selected_index: 0,
             bg_status_receiver: None,
         };
-        // 起動時は tracked ファイルのみ高速に取得（untracked 除外）
+        // 起動時の二段階 status 取得（意図的な設計）:
+        // 1. 同期: tracked ファイルのみ高速取得 (-uno) → UI を即座に表示
+        // 2. 非同期: バックグラウンドで untracked を含む完全 status を取得
+        // CLAUDE.md「起動時1回のみ」の精神を守りつつ、大規模リポジトリでの起動速度を確保するため
         state.refresh_status_tracked_only()?;
-        // バックグラウンドで完全な status を取得開始
         state.spawn_background_full_status();
         // Tree のステータスを適用
         let status_map = build_status_map(&state.status_cache);
-        state.tree_root.apply_status_map(&status_map);
+        let repo_root = state.git.repo_root().to_path_buf();
+        state.tree_root.apply_status_map(&status_map, &repo_root);
         Ok(state)
     }
 
