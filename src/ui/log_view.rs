@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::app::AppState;
+use crate::app::{AppState, ConfirmDialog};
 use crate::domain::GraphLine;
 
 /// Log View を描画する
@@ -21,6 +21,18 @@ pub fn render(f: &mut Frame, state: &AppState) {
 
     render_log(f, state, chunks[0]);
     render_status_bar(f, state, chunks[1]);
+
+    // コミットチェックアウト確認ダイアログ
+    if let ConfirmDialog::Checkout { commit_hash } = &state.confirm_dialog {
+        let area = super::centered_rect(50, 25, f.area());
+        super::render_confirm_dialog(
+            f,
+            "Checkout commit?",
+            commit_hash,
+            state.confirm_selected_yes,
+            area,
+        );
+    }
 }
 
 /// ログ一覧を描画する
