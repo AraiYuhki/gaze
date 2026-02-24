@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.8] - 2026-02-24
+
+### Fixed
+
+- Log View: コミットチェックアウト確認ダイアログが表示されない問題を修正
+  - `ConfirmDialog::Checkout` が Log View で描画されていなかった
+  - 他の確認ダイアログと同じ Yes/No 選択式 UI で表示されるよう修正
+
 ## [0.9.7] - 2026-02-24
 
 ### Fixed
