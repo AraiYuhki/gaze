@@ -24,7 +24,7 @@ pub fn render(f: &mut Frame, state: &AppState) {
 
     // コミットチェックアウト確認ダイアログ
     if let ConfirmDialog::Checkout { commit_hash } = &state.confirm_dialog {
-        let area = super::centered_rect(50, 25, f.area());
+        let area = super::fixed_centered_rect(50, 10, f.area());
         super::render_confirm_dialog(
             f,
             "Checkout commit?",

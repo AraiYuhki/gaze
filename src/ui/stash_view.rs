@@ -116,7 +116,7 @@ fn render_drop_confirm_dialog(f: &mut Frame, state: &AppState, stash_index: usiz
         .map(|s| format!("stash@{{{}}}", s.index))
         .unwrap_or_default();
 
-    let area = super::centered_rect(50, 25, f.area());
+    let area = super::fixed_centered_rect(50, 10, f.area());
     super::render_confirm_dialog(
         f,
         "Drop stash?",
@@ -128,7 +128,7 @@ fn render_drop_confirm_dialog(f: &mut Frame, state: &AppState, stash_index: usiz
 
 /// Stash メッセージ入力ダイアログを描画
 fn render_stash_input_dialog(f: &mut Frame, state: &AppState) {
-    let area = super::centered_rect(60, 30, f.area());
+    let area = super::fixed_centered_rect(50, 10, f.area());
 
     let title = match state.stash_input_mode {
         StashInputMode::Push => " Stash Message (optional) ",

@@ -161,7 +161,7 @@ fn render_search_input(f: &mut Frame, state: &AppState) {
 
 /// ブランチチェックアウト確認ダイアログを描画
 fn render_checkout_confirm_dialog(f: &mut Frame, state: &AppState, branch_name: &str) {
-    let area = super::centered_rect(50, 25, f.area());
+    let area = super::fixed_centered_rect(50, 10, f.area());
     super::render_confirm_dialog(
         f,
         "Switch branch?",
