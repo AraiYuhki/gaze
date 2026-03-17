@@ -109,7 +109,7 @@ fn render_discard_confirm_dialog(f: &mut Frame, state: &AppState, file_index: us
         .map(|f| f.path.display().to_string())
         .unwrap_or_default();
 
-    let area = super::centered_rect(50, 20, f.area());
+    let area = super::fixed_centered_rect(50, 10, f.area());
     super::render_confirm_dialog(
         f,
         "Discard changes?",
@@ -121,13 +121,13 @@ fn render_discard_confirm_dialog(f: &mut Frame, state: &AppState, file_index: us
 
 /// Push/Pull 確認ダイアログを描画する
 fn render_push_pull_dialog(f: &mut Frame, state: &AppState, message: &str) {
-    let area = super::centered_rect(50, 20, f.area());
+    let area = super::fixed_centered_rect(50, 10, f.area());
     super::render_confirm_dialog(f, message, "", state.confirm_selected_yes, area);
 }
 
 /// Amend 確認ダイアログを描画する
 fn render_amend_dialog(f: &mut Frame, state: &AppState) {
-    let area = super::centered_rect(50, 20, f.area());
+    let area = super::fixed_centered_rect(50, 10, f.area());
     super::render_confirm_dialog(
         f,
         "Amend last commit?",

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.9] - 2026-03-17
+
+### Fixed
+
+- コミットメッセージ入力中の IME カーソル位置ずれを修正
+  - `Paragraph` の Wrap（単語境界折り返し）とカーソル位置計算（文字単位折り返し）の不一致を解消
+  - Wrap を廃止し、カーソル位置計算を文字幅合算のみのシンプルな方式に変更
+  - 行幅ちょうどに到達した際にカーソルが次行に飛ぶ問題も解消
+  - カーソル行が表示領域外になった場合の垂直スクロールを追加
+- 確認ダイアログ（Push/Pull/Discard 等）のボタンが見切れる問題を修正
+  - パーセント指定の `centered_rect` を固定サイズの `fixed_centered_rect` に置き換え
+  - 小さいターミナル（24行等）でも Yes/No ボタンとヘルプが正しく表示される
+
 ## [0.9.8] - 2026-02-24
 
 ### Fixed
